@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+/* ============================================================
+   VaultPeer — "Cyber-Sage Desktop" theme tokens
+   Exposed both as CSS custom properties (for arbitrary use) and
+   as Tailwind theme tokens via @theme inline (for utility classes
+   like bg-surface-card, text-accent-mint, etc.)
+   ============================================================ */
+
+:root {
+  /* Dark mode is the default palette */
+  --color-background-primary: #0b0f0e;
+  --color-surface-card: #141a18;
+  --color-surface-elevated: #1a2220;
+  --color-border-sage: #232e2a;
+  --color-accent-mint: #34d399;
+  --color-accent-mint-dim: rgba(52, 211, 153, 0.15);
+  --color-text-primary: #ecfdf5;
+  --color-text-secondary: #d1fae5;
+  --color-text-muted: #94a3b8;
+  --color-status-error: #ef4444;
+  --color-status-success: #10b981;
+  --color-status-warning: #f59e0b;
+
+  /* Spacing scale (8px base) */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --color-background-primary: #f0f4f2;
+  --color-surface-card: #ffffff;
+  --color-surface-elevated: #ffffff;
+  --color-border-sage: #d0dbd6;
+  --color-accent-mint: #059669;
+  --color-accent-mint-dim: rgba(5, 150, 105, 0.12);
+  --color-text-primary: #061a13;
+  --color-text-secondary: #1a3b30;
+  --color-text-muted: #64748b;
+  --color-status-error: #dc2626;
+  --color-status-success: #059669;
+  --color-status-warning: #d97706;
+
+  color-scheme: light;
+}
+
+/* Map CSS variables to Tailwind v4 theme tokens so utilities work:
+   bg-background-primary, bg-surface-card, text-text-primary, etc. */
+@theme inline {
+  --color-background-primary: var(--color-background-primary);
+  --color-surface-card: var(--color-surface-card);
+  --color-surface-elevated: var(--color-surface-elevated);
+  --color-border-sage: var(--color-border-sage);
+  --color-accent-mint: var(--color-accent-mint);
+  --color-accent-mint-dim: var(--color-accent-mint-dim);
+  --color-text-primary: var(--color-text-primary);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-muted: var(--color-text-muted);
+  --color-status-error: var(--color-status-error);
+  --color-status-success: var(--color-status-success);
+  --color-status-warning: var(--color-status-warning);
+
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--color-text-primary);
+  background-color: var(--color-background-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Prevent text selection feeling "appy" by default; allow in inputs/editable */
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
+}
+
+/* Smooth theme transitions */
+:root,
+:root[data-theme="light"] {
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+/* Custom scrollbar to match Cyber-Sage */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-sage);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
