@@ -10,13 +10,16 @@
 //! map "not found" / "malformed" into a single non-revealing [`AppError::NotFound`].
 
 use keepass::{
-    db::{fields, EntryId, GroupId, Icon, Times},
+    db::{fields, Entry, EntryId, GroupId, History, Icon, Times, Value},
     Database,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
+
+/// Built-in KeePass icon index used for the recycle bin group (a trash can).
+const RECYCLE_BIN_ICON: usize = 43;
 
 // ── Frontend-facing shapes ──────────────────────────────────────────────────
 
@@ -59,12 +62,50 @@ pub struct EntrySummary {
     pub icon: Option<usize>,
     pub has_password: bool,
     pub has_otp: bool,
+    /// Number of binary attachments on the entry.
+    pub attachment_count: usize,
     pub tags: Vec<String>,
     /// Epoch milliseconds (UTC), or null if unknown.
     pub created: Option<i64>,
     pub modified: Option<i64>,
     pub expires: bool,
     pub expiry: Option<i64>,
+}
+
+/// A user-defined custom field (any field beyond the standard KeePass ones).
+/// `protected` mirrors the KDBX "memory protection" flag for the value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomField {
+    pub key: String,
+    pub value: String,
+    #[serde(default)]
+    pub protected: bool,
+}
+
+/// Metadata for one binary attachment on an entry.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentMeta {
+    /// Database-wide attachment id.
+    pub id: usize,
+    /// The filename under which the attachment is stored on the entry.
+    pub name: String,
+    /// Size of the binary data in bytes.
+    pub size: usize,
+}
+
+/// A summary of one historical snapshot of an entry, newest first (index 0).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryItem {
+    /// Index into the entry's history list (0 = most recent snapshot).
+    pub index: usize,
+    pub title: String,
+    pub username: String,
+    pub url: String,
+    /// Modification time of this snapshot, epoch milliseconds (UTC).
+    pub modified: Option<i64>,
 }
 
 /// Full entry contents for the detail view and editor.
@@ -80,6 +121,14 @@ pub struct EntryDetail {
     pub notes: String,
     pub icon: Option<usize>,
     pub tags: Vec<String>,
+    pub custom_fields: Vec<CustomField>,
+    pub attachments: Vec<AttachmentMeta>,
+    /// Raw TOTP secret/URI, surfaced read-only here (editing lands in Phase 5).
+    pub otp: String,
+    pub expires: bool,
+    pub expiry: Option<i64>,
+    /// Number of historical snapshots stored for this entry.
+    pub history_count: usize,
     pub created: Option<i64>,
     pub modified: Option<i64>,
 }
@@ -97,6 +146,10 @@ pub struct EntryInput {
     /// KeePass built-in icon index, or null to clear.
     pub icon: Option<usize>,
     pub tags: Vec<String>,
+    pub custom_fields: Vec<CustomField>,
+    pub expires: bool,
+    /// Expiry time as epoch milliseconds (UTC), or null when not expiring.
+    pub expiry: Option<i64>,
 }
 
 // ── Identifier parsing ──────────────────────────────────────────────────────
@@ -134,6 +187,49 @@ fn builtin_icon(icon: Option<&Icon>) -> Option<usize> {
         Some(Icon::BuiltIn(id)) => Some(*id),
         _ => None,
     }
+}
+
+/// Convert epoch milliseconds (UTC) into the crate's naive datetime, or `None`
+/// if the timestamp is out of range.
+fn naive_from_millis(ms: i64) -> Option<chrono::NaiveDateTime> {
+    chrono::DateTime::from_timestamp_millis(ms).map(|d| d.naive_utc())
+}
+
+/// True for the reserved KeePass field names that are surfaced as dedicated
+/// editor fields (Title, UserName, Password, URL, Notes) plus the OTP field.
+/// Everything else is treated as a user-defined custom field.
+fn is_standard_field(key: &str) -> bool {
+    fields::KNOWN_FIELDS.contains(&key) || key == fields::OTP
+}
+
+/// Collect the entry's custom (non-standard) fields, sorted by name.
+fn collect_custom_fields(entry: &Entry) -> Vec<CustomField> {
+    let mut fields: Vec<CustomField> = entry
+        .fields
+        .iter()
+        .filter(|(k, _)| !is_standard_field(k))
+        .map(|(k, v)| CustomField {
+            key: k.clone(),
+            value: v.as_str().to_string(),
+            protected: v.is_protected(),
+        })
+        .collect();
+    fields.sort_by_key(|f| f.key.to_lowercase());
+    fields
+}
+
+/// Collect the entry's attachments (name + size), sorted by name.
+fn collect_attachments(e: &keepass::db::EntryRef<'_>) -> Vec<AttachmentMeta> {
+    let mut atts: Vec<AttachmentMeta> = e
+        .attachments_named()
+        .map(|(name, att)| AttachmentMeta {
+            id: att.id().id(),
+            name: name.to_string(),
+            size: att.data.len(),
+        })
+        .collect();
+    atts.sort_by_key(|a| a.name.to_lowercase());
+    atts
 }
 
 // ── Reads ───────────────────────────────────────────────────────────────────
@@ -209,6 +305,7 @@ fn entry_summary(e: &keepass::db::EntryRef<'_>, group_id: GroupId) -> EntrySumma
         icon: builtin_icon(e.icon()),
         has_password: e.get(fields::PASSWORD).is_some_and(|p| !p.is_empty()),
         has_otp: e.get(fields::OTP).is_some_and(|o| !o.is_empty()),
+        attachment_count: e.attachments().count(),
         tags: e.tags.clone(),
         created: millis(&e.times.creation),
         modified: millis(&e.times.last_modification),
@@ -234,6 +331,12 @@ pub fn get_entry(db: &Database, entry_uuid: &str) -> AppResult<EntryDetail> {
         notes: e.get(fields::NOTES).unwrap_or_default().to_string(),
         icon: builtin_icon(e.icon()),
         tags: e.tags.clone(),
+        custom_fields: collect_custom_fields(&e),
+        attachments: collect_attachments(&e),
+        otp: e.get(fields::OTP).unwrap_or_default().to_string(),
+        expires: e.times.expires.unwrap_or(false),
+        expiry: millis(&e.times.expiry),
+        history_count: e.history.as_ref().map_or(0, |h| h.get_entries().len()),
         created: millis(&e.times.creation),
         modified: millis(&e.times.last_modification),
     })
@@ -250,6 +353,32 @@ fn apply_input(e: &mut keepass::db::EntryMut<'_>, input: &EntryInput) {
     e.set_unprotected(fields::URL, input.url.as_str());
     e.set_unprotected(fields::NOTES, input.notes.as_str());
     e.tags = input.tags.clone();
+
+    // Replace the custom fields wholesale: drop the existing non-standard fields
+    // (preserving Title/UserName/.../OTP) and write the supplied ones back.
+    let stale: Vec<String> = e
+        .fields
+        .keys()
+        .filter(|k| !is_standard_field(k))
+        .cloned()
+        .collect();
+    for key in stale {
+        e.fields.remove(&key);
+    }
+    for cf in &input.custom_fields {
+        if cf.key.trim().is_empty() || is_standard_field(&cf.key) {
+            continue;
+        }
+        if cf.protected {
+            e.set_protected(cf.key.clone(), cf.value.clone());
+        } else {
+            e.set_unprotected(cf.key.clone(), cf.value.clone());
+        }
+    }
+
+    e.times.expires = Some(input.expires);
+    e.times.expiry = input.expiry.and_then(naive_from_millis);
+
     match input.icon {
         Some(id) => e.set_icon_builtin(id),
         None => e.set_icon_none(),
@@ -274,7 +403,8 @@ pub fn create_entry(
     get_entry(db, &id.uuid().to_string())
 }
 
-/// Overwrite an existing entry's standard fields.
+/// Overwrite an existing entry's fields, snapshotting the prior state into the
+/// entry's history first (KeePass DX: every save is recoverable).
 pub fn update_entry(
     db: &mut Database,
     entry_uuid: &str,
@@ -285,16 +415,161 @@ pub fn update_entry(
 
     db.entry_mut(eid)
         .expect("entry existence checked")
-        .edit(|e| apply_input(e, input));
+        .edit_tracking(|t| apply_input(&mut t.as_mut(), input));
 
     get_entry(db, entry_uuid)
 }
 
-/// Permanently delete an entry (recycle bin handling arrives in Phase 4).
-pub fn delete_entry(db: &mut Database, entry_uuid: &str) -> AppResult<()> {
+// ── Recycle bin ──────────────────────────────────────────────────────────────
+
+/// The recycle bin group's id, if one exists in this database.
+fn recycle_bin_id(db: &Database) -> Option<GroupId> {
+    db.recycle_bin().map(|g| g.id())
+}
+
+/// Whether the recycle bin is enabled for this database (default: enabled,
+/// matching KeePass — only an explicit `false` disables it).
+fn recycle_enabled(db: &Database) -> bool {
+    db.meta.recyclebin_enabled != Some(false)
+}
+
+/// True if `group_id` is `ancestor` or lives anywhere beneath it.
+fn group_is_under(db: &Database, group_id: GroupId, ancestor: GroupId) -> bool {
+    let mut cur = Some(group_id);
+    while let Some(id) = cur {
+        if id == ancestor {
+            return true;
+        }
+        cur = db.group(id).and_then(|g| g.parent().map(|p| p.id()));
+    }
+    false
+}
+
+/// Whether an entry currently lives inside the recycle bin subtree.
+fn entry_in_recycle_bin(db: &Database, eid: EntryId) -> bool {
+    match (db.entry(eid), recycle_bin_id(db)) {
+        (Some(e), Some(rb)) => group_is_under(db, e.parent().id(), rb),
+        _ => false,
+    }
+}
+
+/// Return the recycle bin group's id, creating the group (and registering it in
+/// the database metadata) if it does not yet exist.
+fn ensure_recycle_bin(db: &mut Database) -> GroupId {
+    if let Some(id) = recycle_bin_id(db) {
+        return id;
+    }
+    let root_id = db.root().id();
+    let id = {
+        let mut root = db.group_mut(root_id).expect("root always exists");
+        root.add_group()
+            .edit(|g| {
+                g.name = "Recycle Bin".to_string();
+                g.set_icon_builtin(RECYCLE_BIN_ICON);
+            })
+            .id()
+    };
+    db.meta.recyclebin_uuid = Some(id.uuid());
+    db.meta.recyclebin_enabled = Some(true);
+    db.meta.recyclebin_changed = Some(Times::now());
+    id
+}
+
+/// Delete an entry. By default this is a soft delete that moves the entry to the
+/// recycle bin; when `permanent` is set (or the entry is already in the recycle
+/// bin, or the recycle bin is disabled) it is removed for good.
+pub fn delete_entry(db: &mut Database, entry_uuid: &str, permanent: bool) -> AppResult<()> {
     let eid = parse_entry_id(entry_uuid)?;
     require_entry(db, eid)?;
-    db.entry_mut(eid).expect("entry existence checked").remove();
+
+    if permanent || !recycle_enabled(db) || entry_in_recycle_bin(db, eid) {
+        db.entry_mut(eid).expect("entry existence checked").remove();
+        return Ok(());
+    }
+
+    let rb = ensure_recycle_bin(db);
+    db.entry_mut(eid)
+        .expect("entry existence checked")
+        .move_to(rb)
+        .map_err(|e| AppError::InvalidOperation(e.to_string()))
+}
+
+/// Restore an entry out of the recycle bin, back to its previous parent group
+/// (or the root group if that parent is gone or itself in the recycle bin).
+pub fn restore_entry(db: &mut Database, entry_uuid: &str) -> AppResult<()> {
+    let eid = parse_entry_id(entry_uuid)?;
+    require_entry(db, eid)?;
+
+    let previous = db
+        .entry(eid)
+        .and_then(|e| e.previous_parent().map(|p| p.id()));
+    let root = db.root().id();
+    let rb = recycle_bin_id(db);
+
+    let dest = match previous {
+        Some(t)
+            if db.group(t).is_some() && rb.map_or(true, |r| !group_is_under(db, t, r)) =>
+        {
+            t
+        }
+        _ => root,
+    };
+
+    db.entry_mut(eid)
+        .expect("entry existence checked")
+        .move_to(dest)
+        .map_err(|e| AppError::InvalidOperation(e.to_string()))
+}
+
+/// Restore a group out of the recycle bin, back to its previous parent group
+/// (or the root group if that parent is gone or itself in the recycle bin).
+pub fn restore_group(db: &mut Database, group_uuid: &str) -> AppResult<()> {
+    let gid = parse_group_id(group_uuid)?;
+    require_group(db, gid)?;
+
+    let previous = db.group(gid).and_then(|g| g.previous_parent().map(|p| p.id()));
+    let root = db.root().id();
+    let rb = recycle_bin_id(db);
+
+    let dest = match previous {
+        Some(t)
+            if t != gid
+                && db.group(t).is_some()
+                && rb.map_or(true, |r| !group_is_under(db, t, r)) =>
+        {
+            t
+        }
+        _ => root,
+    };
+
+    db.group_mut(gid)
+        .expect("group existence checked")
+        .move_to(dest)
+        .map_err(|e| AppError::InvalidOperation(e.to_string()))
+}
+
+/// Permanently delete everything inside the recycle bin (the bin group itself
+/// is kept). A no-op when there is no recycle bin.
+pub fn empty_recycle_bin(db: &mut Database) -> AppResult<()> {
+    let Some(rb) = recycle_bin_id(db) else {
+        return Ok(());
+    };
+
+    let entry_ids: Vec<EntryId> = db
+        .group(rb)
+        .map(|g| g.entry_ids().collect())
+        .unwrap_or_default();
+    for eid in entry_ids {
+        db.entry_mut(eid).expect("entry existence checked").remove();
+    }
+
+    let group_ids: Vec<GroupId> = db
+        .group(rb)
+        .map(|g| g.group_ids().collect())
+        .unwrap_or_default();
+    for gid in group_ids {
+        db.group_mut(gid).expect("group existence checked").remove();
+    }
     Ok(())
 }
 
@@ -346,8 +621,11 @@ pub fn rename_group(db: &mut Database, group_uuid: &str, name: &str) -> AppResul
     Ok(())
 }
 
-/// Permanently delete a group and everything inside it (recycle bin in Phase 4).
-pub fn delete_group(db: &mut Database, group_uuid: &str) -> AppResult<()> {
+/// Delete a group and everything inside it. By default this is a soft delete
+/// that moves the group to the recycle bin; when `permanent` is set (or the
+/// group is the recycle bin, is already inside it, or the recycle bin is
+/// disabled) it is removed for good.
+pub fn delete_group(db: &mut Database, group_uuid: &str, permanent: bool) -> AppResult<()> {
     let gid = parse_group_id(group_uuid)?;
     require_group(db, gid)?;
 
@@ -357,8 +635,19 @@ pub fn delete_group(db: &mut Database, group_uuid: &str) -> AppResult<()> {
         ));
     }
 
-    db.group_mut(gid).expect("group existence checked").remove();
-    Ok(())
+    let rb = recycle_bin_id(db);
+    let is_bin_or_inside = rb.is_some_and(|r| group_is_under(db, gid, r));
+
+    if permanent || !recycle_enabled(db) || is_bin_or_inside {
+        db.group_mut(gid).expect("group existence checked").remove();
+        return Ok(());
+    }
+
+    let bin = ensure_recycle_bin(db);
+    db.group_mut(gid)
+        .expect("group existence checked")
+        .move_to(bin)
+        .map_err(|e| AppError::InvalidOperation(e.to_string()))
 }
 
 /// Move a group under a new parent (used by drag-and-drop reordering).
@@ -372,6 +661,192 @@ pub fn move_group(db: &mut Database, group_uuid: &str, target_group_uuid: &str) 
         .expect("group existence checked")
         .move_to(target)
         .map_err(|e| AppError::InvalidOperation(e.to_string()))
+}
+
+// ── Attachments ───────────────────────────────────────────────────────────────
+
+/// List an entry's binary attachments.
+pub fn list_attachments(db: &Database, entry_uuid: &str) -> AppResult<Vec<AttachmentMeta>> {
+    let eid = parse_entry_id(entry_uuid)?;
+    let e = db
+        .entry(eid)
+        .ok_or_else(|| AppError::NotFound(format!("entry {eid} not found")))?;
+    Ok(collect_attachments(&e))
+}
+
+/// Read the raw bytes of one of an entry's attachments by filename.
+pub fn get_attachment(db: &Database, entry_uuid: &str, name: &str) -> AppResult<Vec<u8>> {
+    let eid = parse_entry_id(entry_uuid)?;
+    let e = db
+        .entry(eid)
+        .ok_or_else(|| AppError::NotFound(format!("entry {eid} not found")))?;
+    let att = e
+        .attachment_by_name(name)
+        .ok_or_else(|| AppError::NotFound(format!("attachment {name} not found")))?;
+    Ok(att.data.get().clone())
+}
+
+/// Attach a binary to an entry under the given filename. An existing attachment
+/// with the same name is replaced.
+pub fn add_attachment(
+    db: &mut Database,
+    entry_uuid: &str,
+    name: &str,
+    data: Vec<u8>,
+) -> AppResult<Vec<AttachmentMeta>> {
+    let eid = parse_entry_id(entry_uuid)?;
+    require_entry(db, eid)?;
+    if name.trim().is_empty() {
+        return Err(AppError::InvalidOperation(
+            "attachment name cannot be empty".into(),
+        ));
+    }
+
+    db.entry_mut(eid)
+        .expect("entry existence checked")
+        .add_attachment(name.to_string(), Value::unprotected(data));
+
+    list_attachments(db, entry_uuid)
+}
+
+/// Remove one of an entry's attachments by filename.
+pub fn remove_attachment(
+    db: &mut Database,
+    entry_uuid: &str,
+    name: &str,
+) -> AppResult<Vec<AttachmentMeta>> {
+    let eid = parse_entry_id(entry_uuid)?;
+    require_entry(db, eid)?;
+
+    db.entry_mut(eid)
+        .expect("entry existence checked")
+        .remove_attachment_by_name(name);
+
+    list_attachments(db, entry_uuid)
+}
+
+// ── History ───────────────────────────────────────────────────────────────────
+
+/// List an entry's historical snapshots, newest first (index 0).
+pub fn get_entry_history(db: &Database, entry_uuid: &str) -> AppResult<Vec<HistoryItem>> {
+    let eid = parse_entry_id(entry_uuid)?;
+    let e = db
+        .entry(eid)
+        .ok_or_else(|| AppError::NotFound(format!("entry {eid} not found")))?;
+
+    let items = e
+        .history
+        .as_ref()
+        .map(|h| {
+            h.get_entries()
+                .iter()
+                .enumerate()
+                .map(|(index, snap)| HistoryItem {
+                    index,
+                    title: snap.get(fields::TITLE).unwrap_or_default().to_string(),
+                    username: snap.get(fields::USERNAME).unwrap_or_default().to_string(),
+                    url: snap.get(fields::URL).unwrap_or_default().to_string(),
+                    modified: millis(&snap.times.last_modification),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(items)
+}
+
+/// Restore an entry to one of its historical snapshots. The current state is
+/// itself snapshotted into history first, so the restore is reversible.
+pub fn restore_entry_history(
+    db: &mut Database,
+    entry_uuid: &str,
+    index: usize,
+) -> AppResult<EntryDetail> {
+    let eid = parse_entry_id(entry_uuid)?;
+
+    // Clone the snapshot out first to avoid overlapping borrows.
+    let snapshot: Entry = {
+        let e = db
+            .entry(eid)
+            .ok_or_else(|| AppError::NotFound(format!("entry {eid} not found")))?;
+        e.history
+            .as_ref()
+            .and_then(|h| h.get_entries().get(index).cloned())
+            .ok_or_else(|| AppError::NotFound(format!("history snapshot {index} not found")))?
+    };
+
+    db.entry_mut(eid)
+        .expect("entry existence checked")
+        .edit_tracking(|t| {
+            let mut e = t.as_mut();
+            // Replace all fields with the snapshot's.
+            let keys: Vec<String> = e.fields.keys().cloned().collect();
+            for k in keys {
+                e.fields.remove(&k);
+            }
+            for (k, v) in &snapshot.fields {
+                e.set(k.clone(), v.clone());
+            }
+            e.tags = snapshot.tags.clone();
+            e.times.expires = snapshot.times.expires;
+            e.times.expiry = snapshot.times.expiry;
+            match snapshot.icon() {
+                Some(Icon::BuiltIn(id)) => e.set_icon_builtin(*id),
+                _ => e.set_icon_none(),
+            }
+            e.times.last_modification = Some(Times::now());
+        });
+
+    get_entry(db, entry_uuid)
+}
+
+/// Delete a single historical snapshot from an entry by index.
+pub fn delete_entry_history(db: &mut Database, entry_uuid: &str, index: usize) -> AppResult<()> {
+    let eid = parse_entry_id(entry_uuid)?;
+    let mut e = db
+        .entry_mut(eid)
+        .ok_or_else(|| AppError::NotFound(format!("entry {eid} not found")))?;
+
+    let Some(history) = e.history.as_ref() else {
+        return Err(AppError::NotFound("entry has no history".into()));
+    };
+    let entries = history.get_entries();
+    if index >= entries.len() {
+        return Err(AppError::NotFound(format!(
+            "history snapshot {index} not found"
+        )));
+    }
+
+    // History exposes no index-removal, so rebuild it without the dropped item.
+    // get_entries() is newest-first and add_entry() pushes to the front, so we
+    // re-add the kept snapshots oldest-first to preserve ordering.
+    let kept: Vec<Entry> = entries
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != index)
+        .map(|(_, snap)| snap.clone())
+        .collect();
+    let mut rebuilt = History::default();
+    for snap in kept.into_iter().rev() {
+        rebuilt.add_entry(snap);
+    }
+    e.history = Some(rebuilt);
+    Ok(())
+}
+
+/// Collect every distinct tag used across all entries in the database, sorted
+/// case-insensitively. Powers tag autocomplete and the tag filter.
+pub fn all_tags(db: &Database) -> Vec<String> {
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for e in db.iter_all_entries() {
+        for t in &e.tags {
+            if !t.trim().is_empty() {
+                seen.insert(t.clone());
+            }
+        }
+    }
+    let mut tags: Vec<String> = seen.into_iter().collect();
+    tags.sort_by_key(|t| t.to_lowercase());
+    tags
 }
 
 #[cfg(test)]
@@ -399,6 +874,9 @@ mod tests {
             notes: "note".into(),
             icon: Some(19),
             tags: vec!["work".into()],
+            custom_fields: vec![],
+            expires: false,
+            expiry: None,
         }
     }
 
@@ -427,8 +905,8 @@ mod tests {
         assert_eq!(updated.password, "newpass");
         assert_eq!(updated.icon, None);
 
-        // Delete removes it.
-        delete_entry(&mut db, &created.uuid).unwrap();
+        // Permanent delete removes it.
+        delete_entry(&mut db, &created.uuid, true).unwrap();
         assert_eq!(list_entries(&db, &gid).unwrap().len(), 0);
         assert_eq!(db.num_entries(), 0);
     }
@@ -464,7 +942,7 @@ mod tests {
         let tree = database_tree(&db);
         assert_eq!(tree.root.total_entry_count, 1);
 
-        delete_group(&mut db, &sub).unwrap();
+        delete_group(&mut db, &sub, true).unwrap();
         let tree = database_tree(&db);
         let names: Vec<&str> = tree.root.children.iter().map(|c| c.name.as_str()).collect();
         assert!(!names.contains(&"Renamed"));
@@ -479,7 +957,7 @@ mod tests {
             Err(AppError::InvalidOperation(_))
         ));
         assert!(matches!(
-            delete_group(&mut db, &root),
+            delete_group(&mut db, &root, true),
             Err(AppError::InvalidOperation(_))
         ));
     }
@@ -493,12 +971,167 @@ mod tests {
         ));
         let absent = Uuid::new_v4().to_string();
         assert!(matches!(
-            delete_entry(&mut db, &absent),
+            delete_entry(&mut db, &absent, true),
             Err(AppError::NotFound(_))
         ));
         assert!(matches!(
             list_entries(&db, &absent),
             Err(AppError::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn custom_fields_round_trip() {
+        let (mut db, gid) = seeded();
+        let mut inp = input("Server", "pw");
+        inp.custom_fields = vec![
+            CustomField {
+                key: "API Token".into(),
+                value: "abc123".into(),
+                protected: true,
+            },
+            CustomField {
+                key: "Account ID".into(),
+                value: "42".into(),
+                protected: false,
+            },
+        ];
+        let e = create_entry(&mut db, &gid, &inp).unwrap();
+        assert_eq!(e.custom_fields.len(), 2);
+        // Sorted case-insensitively by key.
+        assert_eq!(e.custom_fields[0].key, "Account ID");
+        assert_eq!(e.custom_fields[1].key, "API Token");
+        assert!(e.custom_fields[1].protected);
+
+        // Updating with one fewer custom field drops the removed one but keeps
+        // the standard fields intact.
+        let mut upd = input("Server", "pw");
+        upd.custom_fields = vec![CustomField {
+            key: "Account ID".into(),
+            value: "99".into(),
+            protected: false,
+        }];
+        let e = update_entry(&mut db, &e.uuid, &upd).unwrap();
+        assert_eq!(e.custom_fields.len(), 1);
+        assert_eq!(e.custom_fields[0].value, "99");
+        assert_eq!(e.password, "pw");
+    }
+
+    #[test]
+    fn expiration_round_trip() {
+        let (mut db, gid) = seeded();
+        let mut inp = input("X", "p");
+        inp.expires = true;
+        inp.expiry = Some(1_700_000_000_000);
+        let e = create_entry(&mut db, &gid, &inp).unwrap();
+        assert!(e.expires);
+        assert_eq!(e.expiry, Some(1_700_000_000_000));
+        // Also reflected in the summary.
+        let list = list_entries(&db, &gid).unwrap();
+        assert!(list[0].expires);
+        assert_eq!(list[0].expiry, Some(1_700_000_000_000));
+    }
+
+    #[test]
+    fn attachments_add_get_remove() {
+        let (mut db, gid) = seeded();
+        let e = create_entry(&mut db, &gid, &input("Doc", "p")).unwrap();
+
+        let metas = add_attachment(&mut db, &e.uuid, "notes.txt", b"hello".to_vec()).unwrap();
+        assert_eq!(metas.len(), 1);
+        assert_eq!(metas[0].name, "notes.txt");
+        assert_eq!(metas[0].size, 5);
+
+        let data = get_attachment(&db, &e.uuid, "notes.txt").unwrap();
+        assert_eq!(data, b"hello");
+
+        // Reflected on the entry detail and summary.
+        assert_eq!(get_entry(&db, &e.uuid).unwrap().attachments.len(), 1);
+        assert_eq!(list_entries(&db, &gid).unwrap()[0].attachment_count, 1);
+
+        let metas = remove_attachment(&mut db, &e.uuid, "notes.txt").unwrap();
+        assert_eq!(metas.len(), 0);
+        assert_eq!(db.num_attachments(), 0);
+    }
+
+    #[test]
+    fn history_snapshot_restore_delete() {
+        let (mut db, gid) = seeded();
+        let e = create_entry(&mut db, &gid, &input("v1", "p1")).unwrap();
+        assert_eq!(get_entry_history(&db, &e.uuid).unwrap().len(), 0);
+
+        // Each update snapshots the prior state.
+        let mut upd = input("v2", "p2");
+        update_entry(&mut db, &e.uuid, &upd).unwrap();
+        upd.title = "v3".into();
+        upd.password = "p3".into();
+        update_entry(&mut db, &e.uuid, &upd).unwrap();
+
+        let hist = get_entry_history(&db, &e.uuid).unwrap();
+        assert_eq!(hist.len(), 2);
+        // Newest snapshot first: that's the "v2" state saved before the v3 edit.
+        assert_eq!(hist[0].title, "v2");
+        assert_eq!(hist[1].title, "v1");
+
+        // Restoring the oldest (v1) brings its password back and snapshots v3.
+        let restored = restore_entry_history(&mut db, &e.uuid, 1).unwrap();
+        assert_eq!(restored.title, "v1");
+        assert_eq!(restored.password, "p1");
+        assert_eq!(get_entry_history(&db, &e.uuid).unwrap().len(), 3);
+
+        // Deleting a history item removes exactly one.
+        delete_entry_history(&mut db, &e.uuid, 0).unwrap();
+        assert_eq!(get_entry_history(&db, &e.uuid).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn soft_delete_moves_to_recycle_bin_then_restores() {
+        let (mut db, gid) = seeded();
+        let e = create_entry(&mut db, &gid, &input("Trash me", "p")).unwrap();
+
+        // Soft delete creates the recycle bin and moves the entry there.
+        delete_entry(&mut db, &e.uuid, false).unwrap();
+        assert_eq!(db.num_entries(), 1, "entry still exists, just relocated");
+        let tree = database_tree(&db);
+        assert!(tree.recycle_bin_uuid.is_some());
+        assert_eq!(list_entries(&db, &gid).unwrap().len(), 0);
+
+        // Restore returns it to its original group.
+        restore_entry(&mut db, &e.uuid).unwrap();
+        assert_eq!(list_entries(&db, &gid).unwrap().len(), 1);
+
+        // Soft delete again, then a permanent delete from the bin removes it.
+        delete_entry(&mut db, &e.uuid, false).unwrap();
+        delete_entry(&mut db, &e.uuid, false).unwrap(); // already in bin → permanent
+        assert_eq!(db.num_entries(), 0);
+    }
+
+    #[test]
+    fn empty_recycle_bin_clears_contents() {
+        let (mut db, gid) = seeded();
+        let a = create_entry(&mut db, &gid, &input("a", "p")).unwrap();
+        let b = create_entry(&mut db, &gid, &input("b", "p")).unwrap();
+        delete_entry(&mut db, &a.uuid, false).unwrap();
+        delete_entry(&mut db, &b.uuid, false).unwrap();
+
+        let rb = database_tree(&db).recycle_bin_uuid.unwrap();
+        assert_eq!(list_entries(&db, &rb).unwrap().len(), 2);
+
+        empty_recycle_bin(&mut db).unwrap();
+        assert_eq!(list_entries(&db, &rb).unwrap().len(), 0);
+        assert_eq!(db.num_entries(), 0);
+    }
+
+    #[test]
+    fn all_tags_are_deduped_and_sorted() {
+        let (mut db, gid) = seeded();
+        let mut a = input("a", "p");
+        a.tags = vec!["Work".into(), "email".into()];
+        create_entry(&mut db, &gid, &a).unwrap();
+        let mut b = input("b", "p");
+        b.tags = vec!["email".into(), "Archive".into()];
+        create_entry(&mut db, &gid, &b).unwrap();
+
+        assert_eq!(all_tags(&db), vec!["Archive", "email", "Work"]);
     }
 }

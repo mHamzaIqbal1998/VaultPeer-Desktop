@@ -8,6 +8,7 @@ import {
 } from "@/stores/databaseStore";
 import { VaultIcon } from "@/lib/icons";
 import { copyToClipboard } from "@/lib/clipboard";
+import { tagColor } from "@/lib/tags";
 import { DND_ENTRY } from "./GroupTree";
 
 interface Props {
@@ -33,15 +34,24 @@ export function EntryList({ onNewEntry }: Props) {
   const sortDir = useDatabaseStore((s) => s.sortDir);
   const setSort = useDatabaseStore((s) => s.setSort);
   const loading = useDatabaseStore((s) => s.loadingEntries);
+  const tagFilter = useDatabaseStore((s) => s.tagFilter);
+  const setTagFilter = useDatabaseStore((s) => s.setTagFilter);
 
   const crumbs = useMemo(
     () => (selectedGroupUuid ? groupPath(tree?.root ?? null, selectedGroupUuid) : []),
     [tree, selectedGroupUuid],
   );
 
+  // Tags present on the entries currently in view, for the quick filter row.
+  const visibleTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of entries) for (const t of e.tags) set.add(t);
+    return [...set].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  }, [entries]);
+
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
-    const copy = [...entries];
+    const copy = entries.filter((e) => !tagFilter || e.tags.includes(tagFilter));
     copy.sort((a, b) => {
       if (sortKey === "title") {
         return a.title.toLowerCase().localeCompare(b.title.toLowerCase()) * dir;
@@ -51,7 +61,7 @@ export function EntryList({ onNewEntry }: Props) {
       return (av - bv) * dir;
     });
     return copy;
-  }, [entries, sortKey, sortDir]);
+  }, [entries, sortKey, sortDir, tagFilter]);
 
   return (
     <div className="flex h-full flex-col">
@@ -101,6 +111,41 @@ export function EntryList({ onNewEntry }: Props) {
           </button>
         </div>
       </div>
+
+      {/* Tag filter row */}
+      {(visibleTags.length > 0 || tagFilter) && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-border-sage px-5 py-2">
+          <span className="mr-1 text-xs text-text-muted">Tags:</span>
+          {visibleTags.map((t) => {
+            const c = tagColor(t);
+            const active = tagFilter === t;
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTagFilter(active ? null : t)}
+                className="rounded-full px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-90"
+                style={{
+                  backgroundColor: active ? c.fg : c.bg,
+                  color: active ? "#0B0F0E" : c.fg,
+                  border: `1px solid ${c.border}`,
+                }}
+              >
+                {t}
+              </button>
+            );
+          })}
+          {tagFilter && (
+            <button
+              type="button"
+              onClick={() => setTagFilter(null)}
+              className="ml-1 rounded-full px-2 py-0.5 text-xs text-text-muted transition-colors hover:text-text-secondary"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Entries */}
       <div className="flex-1 overflow-auto p-5">
@@ -220,13 +265,38 @@ function EntryCard({
         >
           Pass
         </CopyButton>
-        {entry.hasOtp && (
-          <span className="ml-auto rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-text-muted">
-            OTP
-          </span>
-        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          {entry.attachmentCount > 0 && (
+            <span
+              className="flex items-center gap-0.5 text-[10px] text-text-muted"
+              title={`${entry.attachmentCount} attachment${entry.attachmentCount === 1 ? "" : "s"}`}
+            >
+              <PaperclipIcon />
+              {entry.attachmentCount}
+            </span>
+          )}
+          {entry.hasOtp && (
+            <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-text-muted">
+              OTP
+            </span>
+          )}
+        </div>
       </div>
     </motion.div>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M21 10.5 12.5 19a4 4 0 0 1-5.7-5.7l8-8a2.7 2.7 0 0 1 3.8 3.8l-8 8a1.3 1.3 0 0 1-1.9-1.9l7-7"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -269,6 +339,11 @@ function EntryRow({
         {entry.username}
       </span>
       <div className="flex shrink-0 items-center gap-1.5">
+        {entry.attachmentCount > 0 && (
+          <span className="text-text-muted" title={`${entry.attachmentCount} attachment${entry.attachmentCount === 1 ? "" : "s"}`}>
+            <PaperclipIcon />
+          </span>
+        )}
         <CopyButton
           label="Copy username"
           disabled={!entry.username}

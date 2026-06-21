@@ -221,38 +221,38 @@ A refined adaptation of the mobile Cyber-Sage aesthetic optimized for desktop in
 
 **Focus**: Custom fields, attachments, history, expiration, templates.
 
-- [ ] Implement custom fields support:
-  - [ ] Dynamic field addition/removal
-  - [ ] Protected (masked) field toggle
-  - [ ] Field name/value editing
-- [ ] Implement attachments:
-  - [ ] Add attachment via file picker
-  - [ ] View attachment metadata (name, size)
-  - [ ] Export attachment to disk
-  - [ ] Delete attachment
-- [ ] Implement entry expiration:
-  - [ ] Date picker for expiry
-  - [ ] Visual indicators for expired/soon-expiring entries
-- [ ] Implement entry history:
-  - [ ] Store historical snapshots
-  - [ ] View history list with timestamps
-  - [ ] Restore from history
-  - [ ] Delete specific history items
-- [ ] Implement tags:
-  - [ ] Tag input with autocomplete
-  - [ ] Tag filtering in entry list
-  - [ ] Color-coded tags
-- [ ] Build template system:
-  - [ ] Pre-defined templates (Credit Card, Email, SSH, Wi-Fi, etc.)
-  - [ ] Template selection on entry creation
-  - [ ] Template field pre-population
-- [ ] Implement recycle bin:
-  - [ ] Soft delete to recycle bin
-  - [ ] Restore from recycle bin
-  - [ ] Permanent delete with confirmation
-  - [ ] Empty recycle bin action
+- [x] Implement custom fields support:
+  - [x] Dynamic field addition/removal
+  - [x] Protected (masked) field toggle
+  - [x] Field name/value editing
+- [x] Implement attachments:
+  - [x] Add attachment via file picker (in both the editor and detail pane)
+  - [x] View attachment metadata (name, size)
+  - [x] Export attachment to disk
+  - [x] Delete attachment
+- [x] Implement entry expiration:
+  - [x] Date picker for expiry
+  - [x] Visual indicators for expired/soon-expiring entries
+- [x] Implement entry history:
+  - [x] Store historical snapshots (auto-snapshot on every update via `edit_tracking`)
+  - [x] View history list with timestamps
+  - [x] Restore from history
+  - [x] Delete specific history items
+- [x] Implement tags:
+  - [x] Tag input with autocomplete (`TagInput`, suggestions from `all_tags`)
+  - [x] Tag filtering in entry list
+  - [x] Color-coded tags (deterministic palette in `lib/tags.ts`)
+- [x] Build template system:
+  - [x] Pre-defined templates (Credit Card, Email, Secure Note, SSH, Wi-Fi, Membership/ID, Software License)
+  - [x] Template selection on entry creation (switching templates swaps fields)
+  - [x] Template field pre-population
+- [x] Implement recycle bin:
+  - [x] Soft delete to recycle bin (auto-created on first soft delete)
+  - [x] Restore from recycle bin (entries + groups, to previous location)
+  - [x] Permanent delete with confirmation
+  - [x] Empty recycle bin action
 
-**Deliverable**: Feature-complete entry management matching KeePass DX.
+**Deliverable**: Feature-complete entry management matching KeePass DX. ✅
 
 ---
 

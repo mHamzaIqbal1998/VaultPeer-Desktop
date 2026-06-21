@@ -1,14 +1,18 @@
 import { create } from "zustand";
 import {
+  allTags as svcAllTags,
   createEntry as svcCreateEntry,
   createGroup as svcCreateGroup,
   deleteEntry as svcDeleteEntry,
   deleteGroup as svcDeleteGroup,
+  emptyRecycleBin as svcEmptyRecycleBin,
   getDatabaseTree,
   listEntries,
   moveEntry as svcMoveEntry,
   moveGroup as svcMoveGroup,
   renameGroup as svcRenameGroup,
+  restoreEntry as svcRestoreEntry,
+  restoreGroup as svcRestoreGroup,
   updateEntry as svcUpdateEntry,
   type DatabaseTree,
   type EntryInput,
@@ -28,6 +32,10 @@ interface DatabaseState {
   entries: EntrySummary[];
   /** UUID of the entry open in the detail pane, or null. */
   selectedEntryUuid: string | null;
+  /** All distinct tags in the database (for autocomplete + the filter chips). */
+  tags: string[];
+  /** Active tag filter applied to the entry list, or null for no filter. */
+  tagFilter: string | null;
 
   view: ViewMode;
   sortKey: SortKey;
@@ -46,19 +54,31 @@ interface DatabaseState {
   selectEntry: (uuid: string | null) => void;
   refreshTree: () => Promise<void>;
   refreshEntries: () => Promise<void>;
+  refreshTags: () => Promise<void>;
 
   setView: (view: ViewMode) => void;
   setSort: (key: SortKey) => void;
+  setTagFilter: (tag: string | null) => void;
 
   // Mutations — each persists in-memory, marks the session dirty, and refreshes.
   createEntry: (groupUuid: string, input: EntryInput) => Promise<string>;
   updateEntry: (entryUuid: string, input: EntryInput) => Promise<void>;
-  deleteEntry: (entryUuid: string) => Promise<void>;
+  deleteEntry: (entryUuid: string, permanent?: boolean) => Promise<void>;
+  restoreEntry: (entryUuid: string) => Promise<void>;
   moveEntry: (entryUuid: string, targetGroupUuid: string) => Promise<void>;
   createGroup: (parentUuid: string, name: string) => Promise<string>;
   renameGroup: (groupUuid: string, name: string) => Promise<void>;
-  deleteGroup: (groupUuid: string) => Promise<void>;
+  deleteGroup: (groupUuid: string, permanent?: boolean) => Promise<void>;
+  restoreGroup: (groupUuid: string) => Promise<void>;
   moveGroup: (groupUuid: string, targetGroupUuid: string) => Promise<void>;
+  emptyRecycleBin: () => Promise<void>;
+}
+
+/** True if `uuid` is the recycle bin group or lives anywhere inside it. */
+export function isInRecycleBin(tree: DatabaseTree | null, uuid: string): boolean {
+  if (!tree?.recycleBinUuid) return false;
+  const bin = findGroup(tree.root, tree.recycleBinUuid);
+  return !!findGroup(bin, uuid);
 }
 
 function markDirty() {
@@ -98,6 +118,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   selectedGroupUuid: null,
   entries: [],
   selectedEntryUuid: null,
+  tags: [],
+  tagFilter: null,
   view: "card",
   sortKey: "title",
   sortDir: "asc",
@@ -110,7 +132,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     try {
       const tree = await getDatabaseTree();
       set({ tree, selectedGroupUuid: tree.root.uuid, selectedEntryUuid: null });
-      await get().refreshEntries();
+      await Promise.all([get().refreshEntries(), get().refreshTags()]);
     } catch (e) {
       set({ error: String(e) });
     } finally {
@@ -124,6 +146,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       selectedGroupUuid: null,
       entries: [],
       selectedEntryUuid: null,
+      tags: [],
+      tagFilter: null,
       error: null,
     }),
 
@@ -163,6 +187,14 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     }
   },
 
+  refreshTags: async () => {
+    try {
+      set({ tags: await svcAllTags() });
+    } catch {
+      /* tags are non-critical; ignore */
+    }
+  },
+
   setView: (view) => set({ view }),
   setSort: (key) =>
     set((s) =>
@@ -170,11 +202,16 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         ? { sortDir: s.sortDir === "asc" ? "desc" : "asc" }
         : { sortKey: key, sortDir: "asc" },
     ),
+  setTagFilter: (tag) => set({ tagFilter: tag }),
 
   createEntry: async (groupUuid, input) => {
     const detail = await svcCreateEntry(groupUuid, input);
     markDirty();
-    await Promise.all([get().refreshEntries(), get().refreshTree()]);
+    await Promise.all([
+      get().refreshEntries(),
+      get().refreshTree(),
+      get().refreshTags(),
+    ]);
     set({ selectedEntryUuid: detail.uuid });
     return detail.uuid;
   },
@@ -182,11 +219,22 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   updateEntry: async (entryUuid, input) => {
     await svcUpdateEntry(entryUuid, input);
     markDirty();
-    await get().refreshEntries();
+    await Promise.all([get().refreshEntries(), get().refreshTags()]);
   },
 
-  deleteEntry: async (entryUuid) => {
-    await svcDeleteEntry(entryUuid);
+  deleteEntry: async (entryUuid, permanent = false) => {
+    await svcDeleteEntry(entryUuid, permanent);
+    markDirty();
+    if (get().selectedEntryUuid === entryUuid) set({ selectedEntryUuid: null });
+    await Promise.all([
+      get().refreshEntries(),
+      get().refreshTree(),
+      get().refreshTags(),
+    ]);
+  },
+
+  restoreEntry: async (entryUuid) => {
+    await svcRestoreEntry(entryUuid);
     markDirty();
     if (get().selectedEntryUuid === entryUuid) set({ selectedEntryUuid: null });
     await Promise.all([get().refreshEntries(), get().refreshTree()]);
@@ -211,26 +259,44 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     await get().refreshTree();
   },
 
-  deleteGroup: async (groupUuid) => {
-    await svcDeleteGroup(groupUuid);
+  deleteGroup: async (groupUuid, permanent = false) => {
+    await svcDeleteGroup(groupUuid, permanent);
     markDirty();
-    // If the deleted group (or a descendant) was selected, fall back to root.
+    // A soft delete relocates the group rather than removing it, so the current
+    // selection only needs to fall back to root on a permanent delete.
     const { tree, selectedGroupUuid } = get();
-    const stillExists =
+    const selectionRemoved =
+      permanent &&
       selectedGroupUuid &&
-      findGroup(tree?.root ?? null, selectedGroupUuid) &&
-      !isInSubtree(tree?.root ?? null, groupUuid, selectedGroupUuid);
-    await get().refreshTree();
-    if (!stillExists) {
+      isInSubtree(tree?.root ?? null, groupUuid, selectedGroupUuid);
+    await Promise.all([get().refreshTree(), get().refreshEntries()]);
+    if (selectionRemoved) {
       const rootUuid = get().tree?.root.uuid;
       if (rootUuid) await get().selectGroup(rootUuid);
     }
+  },
+
+  restoreGroup: async (groupUuid) => {
+    await svcRestoreGroup(groupUuid);
+    markDirty();
+    await Promise.all([get().refreshTree(), get().refreshEntries()]);
   },
 
   moveGroup: async (groupUuid, targetGroupUuid) => {
     await svcMoveGroup(groupUuid, targetGroupUuid);
     markDirty();
     await get().refreshTree();
+  },
+
+  emptyRecycleBin: async () => {
+    await svcEmptyRecycleBin();
+    markDirty();
+    if (get().selectedEntryUuid) set({ selectedEntryUuid: null });
+    await Promise.all([
+      get().refreshTree(),
+      get().refreshEntries(),
+      get().refreshTags(),
+    ]);
   },
 }));
 

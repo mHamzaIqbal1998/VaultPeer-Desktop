@@ -65,6 +65,17 @@ pub fn run() {
             commands::rename_group,
             commands::delete_group,
             commands::move_group,
+            commands::restore_entry,
+            commands::restore_group,
+            commands::empty_recycle_bin,
+            commands::list_attachments,
+            commands::get_attachment,
+            commands::add_attachment,
+            commands::remove_attachment,
+            commands::get_entry_history,
+            commands::restore_entry_history,
+            commands::delete_entry_history,
+            commands::all_tags,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VaultPeer");

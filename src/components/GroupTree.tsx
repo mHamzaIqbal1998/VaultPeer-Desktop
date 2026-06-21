@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useDatabaseStore } from "@/stores/databaseStore";
+import { isInRecycleBin, useDatabaseStore } from "@/stores/databaseStore";
 import type { GroupNode } from "@/services/tauri";
 import { VaultIcon } from "@/lib/icons";
 import { PromptDialog } from "./PromptDialog";
@@ -13,6 +13,8 @@ type Dialog =
   | { kind: "create"; parent: GroupNode }
   | { kind: "rename"; group: GroupNode }
   | { kind: "delete"; group: GroupNode }
+  | { kind: "deletePermanent"; group: GroupNode }
+  | { kind: "empty"; group: GroupNode }
   | null;
 
 /**
@@ -26,6 +28,8 @@ export function GroupTree() {
   const createGroup = useDatabaseStore((s) => s.createGroup);
   const renameGroup = useDatabaseStore((s) => s.renameGroup);
   const deleteGroup = useDatabaseStore((s) => s.deleteGroup);
+  const restoreGroup = useDatabaseStore((s) => s.restoreGroup);
+  const emptyRecycleBin = useDatabaseStore((s) => s.emptyRecycleBin);
   const moveEntry = useDatabaseStore((s) => s.moveEntry);
   const moveGroup = useDatabaseStore((s) => s.moveGroup);
 
@@ -63,6 +67,8 @@ export function GroupTree() {
     const isCollapsed = collapsed.has(node.uuid);
     const selected = node.uuid === selectedGroupUuid;
     const isDropTarget = dropTarget === node.uuid;
+    // A group sitting inside (but not equal to) the recycle bin.
+    const trashed = !node.isRecycleBin && isInRecycleBin(tree, node.uuid);
 
     return (
       <div key={node.uuid}>
@@ -127,27 +133,52 @@ export function GroupTree() {
           </button>
 
           <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/row:opacity-100">
-            <RowButton
-              label="New subgroup"
-              onClick={() => setDialog({ kind: "create", parent: node })}
-            >
-              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </RowButton>
-            {!isRoot && (
+            {node.isRecycleBin ? (
+              <RowButton
+                label="Empty recycle bin"
+                danger
+                onClick={() => setDialog({ kind: "empty", group: node })}
+              >
+                <path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </RowButton>
+            ) : trashed ? (
               <>
-                <RowButton
-                  label="Rename group"
-                  onClick={() => setDialog({ kind: "rename", group: node })}
-                >
-                  <path d="M4 20h4L18.5 9.5a2 2 0 0 0-2.8-2.8L4 18v2Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                <RowButton label="Restore group" onClick={() => void restoreGroup(node.uuid)}>
+                  <path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v3.5h3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                 </RowButton>
                 <RowButton
-                  label="Delete group"
+                  label="Delete permanently"
                   danger
-                  onClick={() => setDialog({ kind: "delete", group: node })}
+                  onClick={() => setDialog({ kind: "deletePermanent", group: node })}
                 >
                   <path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                 </RowButton>
+              </>
+            ) : (
+              <>
+                <RowButton
+                  label="New subgroup"
+                  onClick={() => setDialog({ kind: "create", parent: node })}
+                >
+                  <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </RowButton>
+                {!isRoot && (
+                  <>
+                    <RowButton
+                      label="Rename group"
+                      onClick={() => setDialog({ kind: "rename", group: node })}
+                    >
+                      <path d="M4 20h4L18.5 9.5a2 2 0 0 0-2.8-2.8L4 18v2Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                    </RowButton>
+                    <RowButton
+                      label="Delete group"
+                      danger
+                      onClick={() => setDialog({ kind: "delete", group: node })}
+                    >
+                      <path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    </RowButton>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -215,13 +246,41 @@ export function GroupTree() {
       {dialog?.kind === "delete" && (
         <ConfirmDialog
           title="Delete Group"
-          message={`Delete "${dialog.group.name || "this group"}" and all ${
+          message={`Move "${dialog.group.name || "this group"}" and all ${
             dialog.group.totalEntryCount
-          } entr${dialog.group.totalEntryCount === 1 ? "y" : "ies"} inside it? This cannot be undone.`}
-          confirmLabel="Delete"
+          } entr${dialog.group.totalEntryCount === 1 ? "y" : "ies"} inside it to the recycle bin?`}
+          confirmLabel="Move to Recycle Bin"
           destructive
           onConfirm={async () => {
             await deleteGroup(dialog.group.uuid);
+            setDialog(null);
+          }}
+          onCancel={() => setDialog(null)}
+        />
+      )}
+
+      {dialog?.kind === "deletePermanent" && (
+        <ConfirmDialog
+          title="Delete Permanently"
+          message={`Permanently delete "${dialog.group.name || "this group"}" and everything inside it? This cannot be undone.`}
+          confirmLabel="Delete Forever"
+          destructive
+          onConfirm={async () => {
+            await deleteGroup(dialog.group.uuid, true);
+            setDialog(null);
+          }}
+          onCancel={() => setDialog(null)}
+        />
+      )}
+
+      {dialog?.kind === "empty" && (
+        <ConfirmDialog
+          title="Empty Recycle Bin"
+          message="Permanently delete everything in the recycle bin? This cannot be undone."
+          confirmLabel="Empty Recycle Bin"
+          destructive
+          onConfirm={async () => {
+            await emptyRecycleBin();
             setDialog(null);
           }}
           onCancel={() => setDialog(null)}

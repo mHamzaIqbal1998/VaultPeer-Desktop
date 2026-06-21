@@ -113,6 +113,30 @@ export async function openKeyFileDialog(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+/**
+ * Open a native file-open dialog for picking a file to attach to an entry.
+ * Returns the selected absolute path, or null if cancelled.
+ */
+export async function openAttachmentDialog(): Promise<string | null> {
+  const selected = await open({
+    multiple: false,
+    directory: false,
+    title: "Add Attachment",
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+/**
+ * Open a native save dialog for exporting an attachment to disk.
+ * Returns the chosen absolute path, or null if cancelled.
+ */
+export async function saveAttachmentDialog(
+  defaultName: string,
+): Promise<string | null> {
+  const path = await save({ title: "Export Attachment", defaultPath: defaultName });
+  return path ?? null;
+}
+
 // ── Phase 2: database cryptography & unlock ─────────────────────────────────
 
 /** Decrypt an existing database and load it into the vault session. */
@@ -193,12 +217,41 @@ export interface EntrySummary {
   icon: number | null;
   hasPassword: boolean;
   hasOtp: boolean;
+  /** Number of binary attachments. */
+  attachmentCount: number;
   tags: string[];
   /** Epoch milliseconds (UTC), or null. */
   created: number | null;
   modified: number | null;
   expires: boolean;
   expiry: number | null;
+}
+
+/** A user-defined custom field (mirrors Rust `CustomField`). */
+export interface CustomField {
+  key: string;
+  value: string;
+  /** Whether the value is stored with memory protection (masked by default). */
+  protected: boolean;
+}
+
+/** Metadata for one binary attachment (mirrors Rust `AttachmentMeta`). */
+export interface AttachmentMeta {
+  id: number;
+  name: string;
+  /** Size in bytes. */
+  size: number;
+}
+
+/** A summary of one historical snapshot of an entry (mirrors Rust `HistoryItem`). */
+export interface HistoryItem {
+  /** Index into the entry's history list (0 = most recent). */
+  index: number;
+  title: string;
+  username: string;
+  url: string;
+  /** Epoch milliseconds (UTC), or null. */
+  modified: number | null;
 }
 
 /** Full entry contents for the detail view / editor (mirrors Rust `EntryDetail`). */
@@ -212,6 +265,14 @@ export interface EntryDetail {
   notes: string;
   icon: number | null;
   tags: string[];
+  customFields: CustomField[];
+  attachments: AttachmentMeta[];
+  /** Raw TOTP secret/URI (read-only here; managed in Phase 5). */
+  otp: string;
+  expires: boolean;
+  expiry: number | null;
+  /** Number of historical snapshots stored. */
+  historyCount: number;
   created: number | null;
   modified: number | null;
 }
@@ -225,6 +286,10 @@ export interface EntryInput {
   notes: string;
   icon: number | null;
   tags: string[];
+  customFields: CustomField[];
+  expires: boolean;
+  /** Expiry as epoch milliseconds (UTC), or null when not expiring. */
+  expiry: number | null;
 }
 
 /** An empty entry input, used to seed the editor for a new entry. */
@@ -236,7 +301,26 @@ export const EMPTY_ENTRY_INPUT: EntryInput = {
   notes: "",
   icon: null,
   tags: [],
+  customFields: [],
+  expires: false,
+  expiry: null,
 };
+
+/** Build an `EntryInput` (the editable shape) from a full `EntryDetail`. */
+export function inputFromDetail(d: EntryDetail): EntryInput {
+  return {
+    title: d.title,
+    username: d.username,
+    password: d.password,
+    url: d.url,
+    notes: d.notes,
+    icon: d.icon,
+    tags: d.tags,
+    customFields: d.customFields,
+    expires: d.expires,
+    expiry: d.expiry,
+  };
+}
 
 /** Fetch the full group hierarchy of the open database. */
 export async function getDatabaseTree(): Promise<DatabaseTree> {
@@ -269,9 +353,15 @@ export async function updateEntry(
   return invoke<EntryDetail>("update_entry", { entryUuid, entry });
 }
 
-/** Permanently delete an entry. */
-export async function deleteEntry(entryUuid: string): Promise<void> {
-  await invoke("delete_entry", { entryUuid });
+/**
+ * Delete an entry. By default this is a soft delete to the recycle bin; pass
+ * `permanent` to remove it for good.
+ */
+export async function deleteEntry(
+  entryUuid: string,
+  permanent = false,
+): Promise<void> {
+  await invoke("delete_entry", { entryUuid, permanent });
 }
 
 /** Move an entry into a different group. */
@@ -298,9 +388,15 @@ export async function renameGroup(
   await invoke("rename_group", { groupUuid, name });
 }
 
-/** Permanently delete a group and everything inside it. */
-export async function deleteGroup(groupUuid: string): Promise<void> {
-  await invoke("delete_group", { groupUuid });
+/**
+ * Delete a group and everything inside it. By default this is a soft delete to
+ * the recycle bin; pass `permanent` to remove it for good.
+ */
+export async function deleteGroup(
+  groupUuid: string,
+  permanent = false,
+): Promise<void> {
+  await invoke("delete_group", { groupUuid, permanent });
 }
 
 /** Move a group under a new parent (drag-and-drop reordering). */
@@ -309,6 +405,88 @@ export async function moveGroup(
   targetGroupUuid: string,
 ): Promise<void> {
   await invoke("move_group", { groupUuid, targetGroupUuid });
+}
+
+// ── Phase 4: advanced entry features ─────────────────────────────────────────
+
+/** Restore an entry from the recycle bin to its previous location. */
+export async function restoreEntry(entryUuid: string): Promise<void> {
+  await invoke("restore_entry", { entryUuid });
+}
+
+/** Restore a group from the recycle bin to its previous location. */
+export async function restoreGroup(groupUuid: string): Promise<void> {
+  await invoke("restore_group", { groupUuid });
+}
+
+/** Permanently delete everything inside the recycle bin. */
+export async function emptyRecycleBin(): Promise<void> {
+  await invoke("empty_recycle_bin");
+}
+
+/** List an entry's binary attachments. */
+export async function listAttachments(
+  entryUuid: string,
+): Promise<AttachmentMeta[]> {
+  return invoke<AttachmentMeta[]>("list_attachments", { entryUuid });
+}
+
+/** Read the raw bytes of one of an entry's attachments by filename. */
+export async function getAttachment(
+  entryUuid: string,
+  name: string,
+): Promise<Uint8Array> {
+  const bytes = await invoke<number[]>("get_attachment", { entryUuid, name });
+  return new Uint8Array(bytes);
+}
+
+/** Attach a binary to an entry under the given filename; returns the new list. */
+export async function addAttachment(
+  entryUuid: string,
+  name: string,
+  data: Uint8Array,
+): Promise<AttachmentMeta[]> {
+  return invoke<AttachmentMeta[]>("add_attachment", {
+    entryUuid,
+    name,
+    data: Array.from(data),
+  });
+}
+
+/** Remove one of an entry's attachments by filename; returns the new list. */
+export async function removeAttachment(
+  entryUuid: string,
+  name: string,
+): Promise<AttachmentMeta[]> {
+  return invoke<AttachmentMeta[]>("remove_attachment", { entryUuid, name });
+}
+
+/** List an entry's historical snapshots (newest first). */
+export async function getEntryHistory(
+  entryUuid: string,
+): Promise<HistoryItem[]> {
+  return invoke<HistoryItem[]>("get_entry_history", { entryUuid });
+}
+
+/** Restore an entry to one of its historical snapshots. */
+export async function restoreEntryHistory(
+  entryUuid: string,
+  index: number,
+): Promise<EntryDetail> {
+  return invoke<EntryDetail>("restore_entry_history", { entryUuid, index });
+}
+
+/** Delete a single historical snapshot from an entry. */
+export async function deleteEntryHistory(
+  entryUuid: string,
+  index: number,
+): Promise<void> {
+  await invoke("delete_entry_history", { entryUuid, index });
+}
+
+/** Every distinct tag used across the database (for autocomplete / filtering). */
+export async function allTags(): Promise<string[]> {
+  return invoke<string[]>("all_tags");
 }
 
 /** Read raw bytes from a file. */

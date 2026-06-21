@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 
 use crate::crypto::{self, CreateOptions, DatabaseMetadata};
-use crate::database::{self, DatabaseTree, EntryDetail, EntryInput, EntrySummary};
+use crate::database::{
+    self, AttachmentMeta, DatabaseTree, EntryDetail, EntryInput, EntrySummary, HistoryItem,
+};
 use crate::error::{AppError, AppResult};
 use crate::fs_ops::{self, FileMeta};
 use crate::session::{OpenVault, VaultSession};
@@ -200,10 +202,16 @@ pub fn update_entry(
     with_db_mut(&session, |db| database::update_entry(db, &entry_uuid, &entry))
 }
 
-/// Permanently delete an entry.
+/// Delete an entry — soft delete to the recycle bin unless `permanent` is set.
 #[tauri::command]
-pub fn delete_entry(entry_uuid: String, session: State<'_, VaultSession>) -> AppResult<()> {
-    with_db_mut(&session, |db| database::delete_entry(db, &entry_uuid))
+pub fn delete_entry(
+    entry_uuid: String,
+    permanent: bool,
+    session: State<'_, VaultSession>,
+) -> AppResult<()> {
+    with_db_mut(&session, |db| {
+        database::delete_entry(db, &entry_uuid, permanent)
+    })
 }
 
 /// Move an entry into a different group.
@@ -238,10 +246,16 @@ pub fn rename_group(
     with_db_mut(&session, |db| database::rename_group(db, &group_uuid, &name))
 }
 
-/// Permanently delete a group and everything inside it.
+/// Delete a group — soft delete to the recycle bin unless `permanent` is set.
 #[tauri::command]
-pub fn delete_group(group_uuid: String, session: State<'_, VaultSession>) -> AppResult<()> {
-    with_db_mut(&session, |db| database::delete_group(db, &group_uuid))
+pub fn delete_group(
+    group_uuid: String,
+    permanent: bool,
+    session: State<'_, VaultSession>,
+) -> AppResult<()> {
+    with_db_mut(&session, |db| {
+        database::delete_group(db, &group_uuid, permanent)
+    })
 }
 
 /// Move a group under a new parent (drag-and-drop reordering).
@@ -254,4 +268,107 @@ pub fn move_group(
     with_db_mut(&session, |db| {
         database::move_group(db, &group_uuid, &target_group_uuid)
     })
+}
+
+// ── Phase 4: advanced entry features ─────────────────────────────────────────
+
+/// Restore an entry from the recycle bin to its previous location.
+#[tauri::command]
+pub fn restore_entry(entry_uuid: String, session: State<'_, VaultSession>) -> AppResult<()> {
+    with_db_mut(&session, |db| database::restore_entry(db, &entry_uuid))
+}
+
+/// Restore a group from the recycle bin to its previous location.
+#[tauri::command]
+pub fn restore_group(group_uuid: String, session: State<'_, VaultSession>) -> AppResult<()> {
+    with_db_mut(&session, |db| database::restore_group(db, &group_uuid))
+}
+
+/// Permanently delete everything inside the recycle bin.
+#[tauri::command]
+pub fn empty_recycle_bin(session: State<'_, VaultSession>) -> AppResult<()> {
+    with_db_mut(&session, database::empty_recycle_bin)
+}
+
+/// List an entry's binary attachments.
+#[tauri::command]
+pub fn list_attachments(
+    entry_uuid: String,
+    session: State<'_, VaultSession>,
+) -> AppResult<Vec<AttachmentMeta>> {
+    with_db(&session, |db| database::list_attachments(db, &entry_uuid))
+}
+
+/// Read the raw bytes of one of an entry's attachments by filename.
+#[tauri::command]
+pub fn get_attachment(
+    entry_uuid: String,
+    name: String,
+    session: State<'_, VaultSession>,
+) -> AppResult<Vec<u8>> {
+    with_db(&session, |db| database::get_attachment(db, &entry_uuid, &name))
+}
+
+/// Attach a binary to an entry under the given filename; returns the new list.
+#[tauri::command]
+pub fn add_attachment(
+    entry_uuid: String,
+    name: String,
+    data: Vec<u8>,
+    session: State<'_, VaultSession>,
+) -> AppResult<Vec<AttachmentMeta>> {
+    with_db_mut(&session, |db| {
+        database::add_attachment(db, &entry_uuid, &name, data)
+    })
+}
+
+/// Remove one of an entry's attachments by filename; returns the new list.
+#[tauri::command]
+pub fn remove_attachment(
+    entry_uuid: String,
+    name: String,
+    session: State<'_, VaultSession>,
+) -> AppResult<Vec<AttachmentMeta>> {
+    with_db_mut(&session, |db| {
+        database::remove_attachment(db, &entry_uuid, &name)
+    })
+}
+
+/// List an entry's historical snapshots (newest first).
+#[tauri::command]
+pub fn get_entry_history(
+    entry_uuid: String,
+    session: State<'_, VaultSession>,
+) -> AppResult<Vec<HistoryItem>> {
+    with_db(&session, |db| database::get_entry_history(db, &entry_uuid))
+}
+
+/// Restore an entry to one of its historical snapshots.
+#[tauri::command]
+pub fn restore_entry_history(
+    entry_uuid: String,
+    index: usize,
+    session: State<'_, VaultSession>,
+) -> AppResult<EntryDetail> {
+    with_db_mut(&session, |db| {
+        database::restore_entry_history(db, &entry_uuid, index)
+    })
+}
+
+/// Delete a single historical snapshot from an entry.
+#[tauri::command]
+pub fn delete_entry_history(
+    entry_uuid: String,
+    index: usize,
+    session: State<'_, VaultSession>,
+) -> AppResult<()> {
+    with_db_mut(&session, |db| {
+        database::delete_entry_history(db, &entry_uuid, index)
+    })
+}
+
+/// Every distinct tag used across the database (for autocomplete / filtering).
+#[tauri::command]
+pub fn all_tags(session: State<'_, VaultSession>) -> AppResult<Vec<String>> {
+    with_db(&session, |db| Ok(database::all_tags(db)))
 }
