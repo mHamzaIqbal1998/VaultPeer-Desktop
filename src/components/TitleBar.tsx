@@ -8,7 +8,12 @@ import { lockDatabase } from "@/services/tauri";
  * `data-tauri-drag-region` so the user can drag the window by it, while
  * interactive controls opt out of dragging.
  */
-export function TitleBar() {
+interface TitleBarProps {
+  /** Open the standalone password generator tool (PLAN Phase 5). */
+  onOpenGenerator?: () => void;
+}
+
+export function TitleBar({ onOpenGenerator }: TitleBarProps) {
   const metadata = useSessionStore((s) => s.metadata);
   const setLocked = useSessionStore((s) => s.setLocked);
   const isUnlocked = metadata !== null;
@@ -66,6 +71,13 @@ export function TitleBar() {
       {/* Right-side actions + window controls */}
       <div className="flex items-stretch">
         <div className="flex items-center gap-1 px-2">
+          <ActionButton label="Password generator (Ctrl+G)" onClick={onOpenGenerator}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path d="M14 7l3-3 3 3-3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              <circle cx="7.5" cy="16.5" r="4.5" stroke="currentColor" strokeWidth="2" />
+              <path d="M10.7 13.3 17 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </ActionButton>
           <ActionButton label="Sync status" disabled>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
               <path d="M4 12a8 8 0 0 1 14-5m2 5a8 8 0 0 1-14 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />

@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { TitleBar } from "@/components/TitleBar";
 import { UnlockScreen } from "@/components/UnlockScreen";
 import { MainLayout } from "@/components/MainLayout";
+import { PasswordGenerator } from "@/components/PasswordGenerator";
 import { useSessionStore } from "@/stores/sessionStore";
 import { lockDatabase, saveDatabase } from "@/services/tauri";
 
@@ -14,6 +15,8 @@ export default function App() {
   const setLocked = useSessionStore((s) => s.setLocked);
   const setDirty = useSessionStore((s) => s.setDirty);
   const isUnlocked = metadata !== null;
+
+  const [generatorOpen, setGeneratorOpen] = useState(false);
 
   // Lock from the system tray: drop backend state, then clear the UI session.
   useEffect(() => {
@@ -52,12 +55,25 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, [isUnlocked, setLocked, setDirty]);
 
+  // Ctrl+G: open the standalone password generator tool (PLAN Phase 5).
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "g" || e.key === "G")) {
+        e.preventDefault();
+        setGeneratorOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background-primary text-text-primary">
-      <TitleBar />
+      <TitleBar onOpenGenerator={() => setGeneratorOpen(true)} />
       <main className="flex-1 overflow-hidden">
         {isUnlocked ? <MainLayout /> : <UnlockScreen />}
       </main>
+      {generatorOpen && <PasswordGenerator onClose={() => setGeneratorOpen(false)} />}
     </div>
   );
 }

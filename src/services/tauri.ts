@@ -127,6 +127,23 @@ export async function openAttachmentDialog(): Promise<string | null> {
 }
 
 /**
+ * Open a native file-open dialog filtered to image files, used to scan a QR
+ * code from a saved screenshot/photo (PLAN Phase 5 / OTP-02 fallback).
+ * Returns the selected absolute path, or null if cancelled.
+ */
+export async function openImageDialog(): Promise<string | null> {
+  const selected = await open({
+    multiple: false,
+    directory: false,
+    title: "Scan QR Code from Image",
+    filters: [
+      { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "bmp", "webp"] },
+    ],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+/**
  * Open a native save dialog for exporting an attachment to disk.
  * Returns the chosen absolute path, or null if cancelled.
  */
@@ -287,6 +304,8 @@ export interface EntryInput {
   icon: number | null;
   tags: string[];
   customFields: CustomField[];
+  /** Raw TOTP secret/URI (`otpauth://…` or bare base32); empty clears it. */
+  otp: string;
   expires: boolean;
   /** Expiry as epoch milliseconds (UTC), or null when not expiring. */
   expiry: number | null;
@@ -302,6 +321,7 @@ export const EMPTY_ENTRY_INPUT: EntryInput = {
   icon: null,
   tags: [],
   customFields: [],
+  otp: "",
   expires: false,
   expiry: null,
 };
@@ -317,6 +337,7 @@ export function inputFromDetail(d: EntryDetail): EntryInput {
     icon: d.icon,
     tags: d.tags,
     customFields: d.customFields,
+    otp: d.otp,
     expires: d.expires,
     expiry: d.expiry,
   };
@@ -487,6 +508,25 @@ export async function deleteEntryHistory(
 /** Every distinct tag used across the database (for autocomplete / filtering). */
 export async function allTags(): Promise<string[]> {
   return invoke<string[]>("all_tags");
+}
+
+// ── Phase 5: password generator & OTP ────────────────────────────────────────
+
+/** A generated TOTP code plus countdown timing (mirrors Rust `TotpCode`). */
+export interface TotpCode {
+  code: string;
+  period: number;
+  digits: number;
+  /** Seconds remaining until the code rolls over. */
+  remaining: number;
+}
+
+/**
+ * Generate the current TOTP code for an entry's stored OTP value (an
+ * `otpauth://` URI or a bare base32 secret). Rejects if the secret is invalid.
+ */
+export async function generateTotp(otp: string): Promise<TotpCode> {
+  return invoke<TotpCode>("generate_totp", { otp });
 }
 
 /** Read raw bytes from a file. */

@@ -8,6 +8,7 @@ mod crypto;
 mod database;
 mod error;
 mod fs_ops;
+mod otp;
 mod session;
 mod tray;
 
@@ -76,6 +77,7 @@ pub fn run() {
             commands::restore_entry_history,
             commands::delete_entry_history,
             commands::all_tags,
+            commands::generate_totp,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VaultPeer");

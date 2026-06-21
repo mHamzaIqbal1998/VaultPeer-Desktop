@@ -260,27 +260,27 @@ A refined adaptation of the mobile Cyber-Sage aesthetic optimized for desktop in
 
 **Focus**: Secure password generation and TOTP 2FA support.
 
-- [ ] Implement password generator:
-  - [ ] Character set selection (upper, lower, digits, symbols)
-  - [ ] Length slider (8-128)
-  - [ ] Entropy estimation with visual bar
-  - [ ] Exclude ambiguous characters option
-  - [ ] Pronounceable passphrase mode (Diceware-style)
-- [ ] Build password generator UI:
-  - [ ] Standalone tool window
-  - [ ] Integrated in entry form
-  - [ ] History of generated passwords (session-only)
-- [ ] Implement TOTP support:
-  - [ ] TOTP code generation (RFC 6238)
-  - [ ] QR code scanning via camera integration
-  - [ ] Manual secret entry
-  - [ ] Visual countdown with progress bar
-  - [ ] Copy OTP to clipboard
-  - [ ] Support for SHA1/SHA256/SHA512 algorithms
-  - [ ] Custom period and digit settings
-- [ ] Add OTP display card to entry detail view
+- [x] Implement password generator (Web Crypto, rejection-sampled, in `lib/passwordGenerator.ts`):
+  - [x] Character set selection (upper, lower, digits, symbols)
+  - [x] Length slider (8-128)
+  - [x] Entropy estimation with visual bar (`passwordEntropyBits` / `entropyStrength`)
+  - [x] Exclude ambiguous characters option
+  - [x] Pronounceable passphrase mode (Diceware-style, 256-word `lib/wordlist.ts`)
+- [x] Build password generator UI:
+  - [x] Standalone tool window (`PasswordGenerator.tsx`, opens from title bar / Ctrl+G)
+  - [x] Integrated in entry form (`PasswordGeneratorPopover`)
+  - [x] History of generated passwords (session-only, `stores/generatorStore.ts`)
+- [x] Implement TOTP support (native Rust `otp.rs`, verified against RFC 6238 vectors):
+  - [x] TOTP code generation (RFC 6238) (`generate_totp` command + dynamic truncation)
+  - [x] QR code scanning via camera integration (`QrScanner.tsx`, jsQR; + image-file fallback)
+  - [x] Manual secret entry (`OtpEditor`, base32 or `otpauth://` URI)
+  - [x] Visual countdown with progress bar (`OtpCard` countdown ring)
+  - [x] Copy OTP to clipboard
+  - [x] Support for SHA1/SHA256/SHA512 algorithms
+  - [x] Custom period and digit settings
+- [x] Add OTP display card to entry detail view (`OtpCard` in `EntryDetail`)
 
-**Deliverable**: Password generator and OTP support fully functional.
+**Deliverable**: Password generator and OTP support fully functional. ✅
 
 ---
 

@@ -31,6 +31,11 @@ argon2 = { package = "rust-argon2", version = "3" }
 uuid = { version = "1", features = ["v4"] }
 # Timestamp conversion (NaiveDateTime -> epoch millis) for entry metadata (Phase 3).
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# TOTP (RFC 6238) code generation for OTP-enabled entries (Phase 5). HMAC over
+# SHA-1/256/512; base32 secret decoding is implemented inline in `otp.rs`.
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
 
 [features]
 # This feature is used for production builds or when a dev server is not

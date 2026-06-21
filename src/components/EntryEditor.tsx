@@ -19,6 +19,7 @@ import { PasswordField } from "./PasswordField";
 import { StrengthMeter } from "./StrengthMeter";
 import { IconPicker } from "./IconPicker";
 import { PasswordGeneratorPopover } from "./PasswordGeneratorPopover";
+import { OtpEditor } from "./OtpEditor";
 import { TagInput } from "./TagInput";
 
 /** Strip the directory part from a file path (handles both \ and /). */
@@ -327,6 +328,10 @@ export function EntryEditor({ entry, groupUuid, onClose }: Props) {
               placeholder="Additional notes…"
               className={`${inputCls} resize-y`}
             />
+          </Field>
+
+          <Field label="One-Time Password (2FA)">
+            <OtpEditor value={form.otp} onChange={(otp) => patch({ otp })} />
           </Field>
 
           <Field label="Tags">

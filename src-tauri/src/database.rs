@@ -147,6 +147,9 @@ pub struct EntryInput {
     pub icon: Option<usize>,
     pub tags: Vec<String>,
     pub custom_fields: Vec<CustomField>,
+    /// Raw TOTP secret/URI (`otpauth://…` or a bare base32 secret). Empty clears
+    /// the OTP field. Stored protected like the password (PLAN Phase 5).
+    pub otp: String,
     pub expires: bool,
     /// Expiry time as epoch milliseconds (UTC), or null when not expiring.
     pub expiry: Option<i64>,
@@ -353,6 +356,13 @@ fn apply_input(e: &mut keepass::db::EntryMut<'_>, input: &EntryInput) {
     e.set_unprotected(fields::URL, input.url.as_str());
     e.set_unprotected(fields::NOTES, input.notes.as_str());
     e.tags = input.tags.clone();
+
+    // OTP secret/URI: stored protected, or cleared when blank (PLAN Phase 5).
+    if input.otp.trim().is_empty() {
+        e.fields.remove(fields::OTP);
+    } else {
+        e.set_protected(fields::OTP, input.otp.as_str());
+    }
 
     // Replace the custom fields wholesale: drop the existing non-standard fields
     // (preserving Title/UserName/.../OTP) and write the supplied ones back.
@@ -875,6 +885,7 @@ mod tests {
             icon: Some(19),
             tags: vec!["work".into()],
             custom_fields: vec![],
+            otp: String::new(),
             expires: false,
             expiry: None,
         }
@@ -1015,6 +1026,25 @@ mod tests {
         assert_eq!(e.custom_fields.len(), 1);
         assert_eq!(e.custom_fields[0].value, "99");
         assert_eq!(e.password, "pw");
+    }
+
+    #[test]
+    fn otp_round_trips_and_clears() {
+        let (mut db, gid) = seeded();
+        let mut inp = input("2FA", "p");
+        inp.otp = "otpauth://totp/x?secret=MZXW6YTBOI".into();
+        let e = create_entry(&mut db, &gid, &inp).unwrap();
+        assert_eq!(e.otp, "otpauth://totp/x?secret=MZXW6YTBOI");
+        // Surfaced as a flag on the list summary, and not leaked as a custom field.
+        assert!(list_entries(&db, &gid).unwrap()[0].has_otp);
+        assert!(e.custom_fields.is_empty());
+
+        // Clearing the OTP removes the field entirely.
+        let mut upd = input("2FA", "p");
+        upd.otp = String::new();
+        let e = update_entry(&mut db, &e.uuid, &upd).unwrap();
+        assert_eq!(e.otp, "");
+        assert!(!list_entries(&db, &gid).unwrap()[0].has_otp);
     }
 
     #[test]

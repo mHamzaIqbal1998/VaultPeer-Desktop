@@ -13,6 +13,7 @@ use crate::database::{
 };
 use crate::error::{AppError, AppResult};
 use crate::fs_ops::{self, FileMeta};
+use crate::otp::{self, TotpCode};
 use crate::session::{OpenVault, VaultSession};
 
 /// Hello-world sanity command (PLAN Phase 1).
@@ -371,4 +372,18 @@ pub fn delete_entry_history(
 #[tauri::command]
 pub fn all_tags(session: State<'_, VaultSession>) -> AppResult<Vec<String>> {
     with_db(&session, |db| Ok(database::all_tags(db)))
+}
+
+// ── Phase 5: password generator & OTP ────────────────────────────────────────
+
+/// Generate the current TOTP code for an entry's stored OTP value (an
+/// `otpauth://` URI or a bare base32 secret), with the timing the UI needs to
+/// drive a countdown. Pure compute — no session/database access required.
+#[tauri::command]
+pub fn generate_totp(otp: String) -> AppResult<TotpCode> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| AppError::Other(format!("system clock error: {e}")))?
+        .as_secs();
+    otp::current_code(&otp, now)
 }

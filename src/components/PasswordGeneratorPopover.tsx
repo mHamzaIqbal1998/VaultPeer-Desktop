@@ -68,7 +68,7 @@ export function PasswordGeneratorPopover({ onApply, onClose }: Props) {
       <input
         type="range"
         min={8}
-        max={64}
+        max={128}
         value={opts.length}
         onChange={(e) => regenerate({ ...opts, length: Number(e.target.value) })}
         className="mb-3 w-full accent-[var(--color-accent-mint)]"

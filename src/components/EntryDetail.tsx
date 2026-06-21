@@ -19,6 +19,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { tagColor } from "@/lib/tags";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { HistoryPanel } from "./HistoryPanel";
+import { OtpCard } from "./OtpCard";
 
 interface Props {
   /** Open the editor for this entry. */
@@ -254,6 +255,8 @@ export function EntryDetail({ onEdit }: Props) {
               {detail.password ? (reveal ? detail.password : "•".repeat(Math.min(detail.password.length, 24))) : <span className="text-text-muted">—</span>}
             </div>
           </div>
+
+          {detail.otp && <OtpCard otp={detail.otp} />}
 
           <DetailRow
             label="URL"
