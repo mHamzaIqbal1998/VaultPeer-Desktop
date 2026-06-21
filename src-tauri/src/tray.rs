@@ -6,13 +6,17 @@
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, Runtime,
+    AppHandle, Emitter, Manager, Runtime,
 };
+
+/// Event emitted to the frontend when the user picks "Lock Database" from the
+/// tray. The webview listens for this and invokes the `lock_database` command.
+pub const LOCK_EVENT: &str = "vault://lock";
 
 /// Build and attach the tray icon to the running app.
 pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show VaultPeer", true, None::<&str>)?;
-    let lock = MenuItem::with_id(app, "lock", "Lock Database", false, None::<&str>)?;
+    let lock = MenuItem::with_id(app, "lock", "Lock Database", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
 
@@ -25,7 +29,11 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main_window(app),
-            "lock" => { /* wired up in Phase 2 (database lock) */ }
+            "lock" => {
+                // The session lives in the webview's command layer; ask it to lock.
+                show_main_window(app);
+                let _ = app.emit(LOCK_EVENT, ());
+            }
             "quit" => app.exit(0),
             _ => {}
         })

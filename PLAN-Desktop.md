@@ -164,23 +164,23 @@ A refined adaptation of the mobile Cyber-Sage aesthetic optimized for desktop in
 
 **Focus**: KDBX file parsing, Argon2 KDF, database unlock/create operations.
 
-- [ ] Integrate `keepass-rs` crate for KDBX file parsing
-- [ ] Implement Argon2id/Argon2d KDF using `argon2` crate
-- [ ] Implement AES-256-CBC and ChaCha20 cipher support
-- [ ] Create Tauri commands:
-  - [ ] `decrypt_database(path, password, key_file?)`
-  - [ ] `create_database(path, name, password, options)`
-  - [ ] `save_database(db_handle)` with atomic write
-- [ ] Build unlock screen UI:
-  - [ ] Password input with visibility toggle
-  - [ ] Key file selection
-  - [ ] Visual password strength meter
-  - [ ] Recent files list with metadata
-- [ ] Implement database metadata display (name, version, cipher, KDF)
-- [ ] Add error handling for corrupt/invalid files
-- [ ] Write comprehensive Rust tests for crypto operations
+- [x] Integrate `keepass-rs` crate for KDBX file parsing (`keepass` v0.13)
+- [x] Implement Argon2id/Argon2d KDF using `argon2` crate (via `keepass` KdfConfig)
+- [x] Implement AES-256-CBC and ChaCha20 cipher support (+ Twofish, AES-KDF)
+- [x] Create Tauri commands:
+  - [x] `unlock_database(path, password, key_file?)`
+  - [x] `create_database(path, name, password, key_file?, options)`
+  - [x] `save_database()` with atomic write (+ `lock_database`, `vault_status`)
+- [x] Build unlock screen UI:
+  - [x] Password input with visibility toggle
+  - [x] Key file selection
+  - [x] Visual password strength meter
+  - [x] Recent files list with metadata
+- [x] Implement database metadata display (name, version, cipher, KDF)
+- [x] Add error handling for corrupt/invalid files (non-revealing credential errors)
+- [x] Write comprehensive Rust tests for crypto operations (6 crypto tests)
 
-**Deliverable**: Can open and create KDBX files with full encryption support.
+**Deliverable**: Can open and create KDBX files with full encryption support. ✅
 
 ---
 

@@ -1,5 +1,7 @@
 import { WindowControls } from "./WindowControls";
 import { ThemeToggle } from "./ThemeToggle";
+import { useSessionStore } from "@/stores/sessionStore";
+import { lockDatabase } from "@/services/tauri";
 
 /**
  * Frameless custom title bar. The center region is marked
@@ -7,6 +9,18 @@ import { ThemeToggle } from "./ThemeToggle";
  * interactive controls opt out of dragging.
  */
 export function TitleBar() {
+  const metadata = useSessionStore((s) => s.metadata);
+  const setLocked = useSessionStore((s) => s.setLocked);
+  const isUnlocked = metadata !== null;
+
+  async function handleLock() {
+    try {
+      await lockDatabase();
+    } finally {
+      setLocked();
+    }
+  }
+
   return (
     <header
       data-tauri-drag-region
@@ -58,7 +72,7 @@ export function TitleBar() {
               <path d="M18 3v4h-4M6 21v-4h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </ActionButton>
-          <ActionButton label="Lock database" disabled>
+          <ActionButton label="Lock database (Ctrl+L)" disabled={!isUnlocked} onClick={handleLock}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
               <rect x="5" y="10" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="2" />
               <path d="M8 10V7a4 4 0 0 1 8 0v3" stroke="currentColor" strokeWidth="2" />

@@ -4,11 +4,15 @@
 //! library-side so it can also back a future mobile target.
 
 mod commands;
+mod crypto;
 mod error;
 mod fs_ops;
+mod session;
 mod tray;
 
 use tauri::{Manager, WindowEvent};
+
+use crate::session::VaultSession;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -23,6 +27,8 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        // Holds the single unlocked database for the session (Phase 2).
+        .manage(VaultSession::default())
         .setup(|app| {
             tray::create_tray(app.handle())?;
             Ok(())
@@ -42,6 +48,11 @@ pub fn run() {
             commands::read_file,
             commands::write_file,
             commands::stat_file,
+            commands::unlock_database,
+            commands::create_database,
+            commands::save_database,
+            commands::lock_database,
+            commands::vault_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VaultPeer");
