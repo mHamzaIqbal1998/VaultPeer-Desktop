@@ -26,6 +26,11 @@ keepass = { version = "0.13", features = ["save_kdbx4"] }
 # Re-exported by keepass for Argon2 KDF parameters (KdfConfig::Argon2*.version).
 # The crate is published as `rust-argon2` but exposes the `argon2` module path.
 argon2 = { package = "rust-argon2", version = "3" }
+# UUID parsing for entry/group identifiers exchanged with the frontend (Phase 3).
+# Matches the major version keepass uses so GroupId/EntryId conversions line up.
+uuid = { version = "1", features = ["v4"] }
+# Timestamp conversion (NaiveDateTime -> epoch millis) for entry metadata (Phase 3).
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [features]
 # This feature is used for production builds or when a dev server is not

@@ -4318,6 +4318,7 @@ dependencies = [
 name = "vaultpeer-desktop"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "keepass",
  "rust-argon2",
  "serde",
@@ -4327,6 +4328,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-single-instance",
  "thiserror 2.0.18",
+ "uuid",
 ]
 
 [[package]]

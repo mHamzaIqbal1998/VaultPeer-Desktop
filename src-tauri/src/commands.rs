@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 
 use crate::crypto::{self, CreateOptions, DatabaseMetadata};
+use crate::database::{self, DatabaseTree, EntryDetail, EntryInput, EntrySummary};
 use crate::error::{AppError, AppResult};
 use crate::fs_ops::{self, FileMeta};
 use crate::session::{OpenVault, VaultSession};
@@ -126,4 +127,131 @@ pub fn vault_status(session: State<'_, VaultSession>) -> Option<DatabaseMetadata
     guard
         .as_ref()
         .map(|v| crypto::metadata_from(&v.db, &v.path))
+}
+
+// ── Phase 3: entry & group management ───────────────────────────────────────
+//
+// These operate on the in-memory database and are cheap (no crypto), so they
+// run synchronously on the calling thread while holding the session lock. The
+// frontend marks the session dirty and re-fetches affected views; persistence
+// still goes through `save_database`.
+
+/// Borrow the open database immutably, or fail if the vault is locked.
+fn with_db<T>(
+    session: &VaultSession,
+    f: impl FnOnce(&keepass::Database) -> AppResult<T>,
+) -> AppResult<T> {
+    let guard = session.0.lock().expect("vault session mutex poisoned");
+    let vault = guard.as_ref().ok_or(AppError::NoOpenDatabase)?;
+    f(&vault.db)
+}
+
+/// Borrow the open database mutably, or fail if the vault is locked.
+fn with_db_mut<T>(
+    session: &VaultSession,
+    f: impl FnOnce(&mut keepass::Database) -> AppResult<T>,
+) -> AppResult<T> {
+    let mut guard = session.0.lock().expect("vault session mutex poisoned");
+    let vault = guard.as_mut().ok_or(AppError::NoOpenDatabase)?;
+    f(&mut vault.db)
+}
+
+/// Return the full group hierarchy of the open database.
+#[tauri::command]
+pub fn get_database_tree(session: State<'_, VaultSession>) -> AppResult<DatabaseTree> {
+    with_db(&session, |db| Ok(database::database_tree(db)))
+}
+
+/// List the entries directly contained in a group.
+#[tauri::command]
+pub fn list_entries(
+    group_uuid: String,
+    session: State<'_, VaultSession>,
+) -> AppResult<Vec<EntrySummary>> {
+    with_db(&session, |db| database::list_entries(db, &group_uuid))
+}
+
+/// Read the full contents of a single entry.
+#[tauri::command]
+pub fn get_entry(
+    entry_uuid: String,
+    session: State<'_, VaultSession>,
+) -> AppResult<EntryDetail> {
+    with_db(&session, |db| database::get_entry(db, &entry_uuid))
+}
+
+/// Create a new entry in a group and return its full detail.
+#[tauri::command]
+pub fn create_entry(
+    group_uuid: String,
+    entry: EntryInput,
+    session: State<'_, VaultSession>,
+) -> AppResult<EntryDetail> {
+    with_db_mut(&session, |db| database::create_entry(db, &group_uuid, &entry))
+}
+
+/// Overwrite an existing entry's standard fields.
+#[tauri::command]
+pub fn update_entry(
+    entry_uuid: String,
+    entry: EntryInput,
+    session: State<'_, VaultSession>,
+) -> AppResult<EntryDetail> {
+    with_db_mut(&session, |db| database::update_entry(db, &entry_uuid, &entry))
+}
+
+/// Permanently delete an entry.
+#[tauri::command]
+pub fn delete_entry(entry_uuid: String, session: State<'_, VaultSession>) -> AppResult<()> {
+    with_db_mut(&session, |db| database::delete_entry(db, &entry_uuid))
+}
+
+/// Move an entry into a different group.
+#[tauri::command]
+pub fn move_entry(
+    entry_uuid: String,
+    target_group_uuid: String,
+    session: State<'_, VaultSession>,
+) -> AppResult<()> {
+    with_db_mut(&session, |db| {
+        database::move_entry(db, &entry_uuid, &target_group_uuid)
+    })
+}
+
+/// Create a new subgroup and return its UUID.
+#[tauri::command]
+pub fn create_group(
+    parent_uuid: String,
+    name: String,
+    session: State<'_, VaultSession>,
+) -> AppResult<String> {
+    with_db_mut(&session, |db| database::create_group(db, &parent_uuid, &name))
+}
+
+/// Rename a group.
+#[tauri::command]
+pub fn rename_group(
+    group_uuid: String,
+    name: String,
+    session: State<'_, VaultSession>,
+) -> AppResult<()> {
+    with_db_mut(&session, |db| database::rename_group(db, &group_uuid, &name))
+}
+
+/// Permanently delete a group and everything inside it.
+#[tauri::command]
+pub fn delete_group(group_uuid: String, session: State<'_, VaultSession>) -> AppResult<()> {
+    with_db_mut(&session, |db| database::delete_group(db, &group_uuid))
+}
+
+/// Move a group under a new parent (drag-and-drop reordering).
+#[tauri::command]
+pub fn move_group(
+    group_uuid: String,
+    target_group_uuid: String,
+    session: State<'_, VaultSession>,
+) -> AppResult<()> {
+    with_db_mut(&session, |db| {
+        database::move_group(db, &group_uuid, &target_group_uuid)
+    })
 }

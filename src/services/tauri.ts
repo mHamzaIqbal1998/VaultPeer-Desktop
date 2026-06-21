@@ -160,6 +160,157 @@ export async function vaultStatus(): Promise<DatabaseMetadata | null> {
   return invoke<DatabaseMetadata | null>("vault_status");
 }
 
+// ── Phase 3: entry & group management ───────────────────────────────────────
+
+/** A node in the group hierarchy (mirrors Rust `GroupNode`). */
+export interface GroupNode {
+  uuid: string;
+  name: string;
+  /** KeePass built-in icon index, or null. */
+  icon: number | null;
+  notes: string | null;
+  /** Entries directly in this group. */
+  entryCount: number;
+  /** Entries in this group and all descendants. */
+  totalEntryCount: number;
+  isRecycleBin: boolean;
+  children: GroupNode[];
+}
+
+/** The full group tree of the open database. */
+export interface DatabaseTree {
+  root: GroupNode;
+  recycleBinUuid: string | null;
+}
+
+/** Compact entry shape for list/card views (mirrors Rust `EntrySummary`). */
+export interface EntrySummary {
+  uuid: string;
+  groupUuid: string;
+  title: string;
+  username: string;
+  url: string;
+  icon: number | null;
+  hasPassword: boolean;
+  hasOtp: boolean;
+  tags: string[];
+  /** Epoch milliseconds (UTC), or null. */
+  created: number | null;
+  modified: number | null;
+  expires: boolean;
+  expiry: number | null;
+}
+
+/** Full entry contents for the detail view / editor (mirrors Rust `EntryDetail`). */
+export interface EntryDetail {
+  uuid: string;
+  groupUuid: string;
+  title: string;
+  username: string;
+  password: string;
+  url: string;
+  notes: string;
+  icon: number | null;
+  tags: string[];
+  created: number | null;
+  modified: number | null;
+}
+
+/** Mutable entry fields sent to the backend on create/update (Rust `EntryInput`). */
+export interface EntryInput {
+  title: string;
+  username: string;
+  password: string;
+  url: string;
+  notes: string;
+  icon: number | null;
+  tags: string[];
+}
+
+/** An empty entry input, used to seed the editor for a new entry. */
+export const EMPTY_ENTRY_INPUT: EntryInput = {
+  title: "",
+  username: "",
+  password: "",
+  url: "",
+  notes: "",
+  icon: null,
+  tags: [],
+};
+
+/** Fetch the full group hierarchy of the open database. */
+export async function getDatabaseTree(): Promise<DatabaseTree> {
+  return invoke<DatabaseTree>("get_database_tree");
+}
+
+/** List entries directly contained in a group. */
+export async function listEntries(groupUuid: string): Promise<EntrySummary[]> {
+  return invoke<EntrySummary[]>("list_entries", { groupUuid });
+}
+
+/** Read the full contents of a single entry. */
+export async function getEntry(entryUuid: string): Promise<EntryDetail> {
+  return invoke<EntryDetail>("get_entry", { entryUuid });
+}
+
+/** Create a new entry in a group; returns the created entry's detail. */
+export async function createEntry(
+  groupUuid: string,
+  entry: EntryInput,
+): Promise<EntryDetail> {
+  return invoke<EntryDetail>("create_entry", { groupUuid, entry });
+}
+
+/** Overwrite an existing entry's standard fields. */
+export async function updateEntry(
+  entryUuid: string,
+  entry: EntryInput,
+): Promise<EntryDetail> {
+  return invoke<EntryDetail>("update_entry", { entryUuid, entry });
+}
+
+/** Permanently delete an entry. */
+export async function deleteEntry(entryUuid: string): Promise<void> {
+  await invoke("delete_entry", { entryUuid });
+}
+
+/** Move an entry into a different group. */
+export async function moveEntry(
+  entryUuid: string,
+  targetGroupUuid: string,
+): Promise<void> {
+  await invoke("move_entry", { entryUuid, targetGroupUuid });
+}
+
+/** Create a new subgroup; returns the new group's UUID. */
+export async function createGroup(
+  parentUuid: string,
+  name: string,
+): Promise<string> {
+  return invoke<string>("create_group", { parentUuid, name });
+}
+
+/** Rename a group. */
+export async function renameGroup(
+  groupUuid: string,
+  name: string,
+): Promise<void> {
+  await invoke("rename_group", { groupUuid, name });
+}
+
+/** Permanently delete a group and everything inside it. */
+export async function deleteGroup(groupUuid: string): Promise<void> {
+  await invoke("delete_group", { groupUuid });
+}
+
+/** Move a group under a new parent (drag-and-drop reordering). */
+export async function moveGroup(
+  groupUuid: string,
+  targetGroupUuid: string,
+): Promise<void> {
+  await invoke("move_group", { groupUuid, targetGroupUuid });
+}
+
 /** Read raw bytes from a file. */
 export async function readFile(path: string): Promise<Uint8Array> {
   const bytes = await invoke<number[]>("read_file", { path });

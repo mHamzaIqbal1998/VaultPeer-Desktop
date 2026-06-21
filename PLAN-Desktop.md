@@ -188,32 +188,32 @@ A refined adaptation of the mobile Cyber-Sage aesthetic optimized for desktop in
 
 **Focus**: CRUD operations for entries and groups, tree navigation.
 
-- [ ] Implement database tree parsing (groups + entries)
-- [ ] Create Tauri commands:
-  - [ ] `get_database_tree`
-  - [ ] `create_entry(group_uuid, entry_data)`
-  - [ ] `update_entry(entry_uuid, entry_data)`
-  - [ ] `delete_entry(entry_uuid)`
-  - [ ] `create_group(parent_uuid, name)`
-  - [ ] `rename_group(uuid, name)`
-  - [ ] `delete_group(uuid)`
-  - [ ] `move_entry(entry_uuid, target_group_uuid)`
-- [ ] Build main application layout:
-  - [ ] Sidebar with collapsible group tree
-  - [ ] Main content area with entry list/cards
-  - [ ] Breadcrumb navigation
-- [ ] Implement entry list view:
-  - [ ] Card view with icons
-  - [ ] List view with columns (toggle)
-  - [ ] Sorting (title, created, modified)
-- [ ] Implement entry creation/editing form:
-  - [ ] Title, Username, Password, URL, Notes fields
-  - [ ] Password generator integration
-  - [ ] Icon picker (KeePass standard icons)
-- [ ] Add drag-and-drop for moving entries between groups
-- [ ] Implement entry/group deletion with confirmation
+- [x] Implement database tree parsing (groups + entries) (recursive `GroupNode` with rolled-up entry counts)
+- [x] Create Tauri commands:
+  - [x] `get_database_tree`
+  - [x] `create_entry(group_uuid, entry_data)`
+  - [x] `update_entry(entry_uuid, entry_data)`
+  - [x] `delete_entry(entry_uuid)`
+  - [x] `create_group(parent_uuid, name)`
+  - [x] `rename_group(uuid, name)`
+  - [x] `delete_group(uuid)`
+  - [x] `move_entry(entry_uuid, target_group_uuid)` (+ `get_entry`, `move_group`)
+- [x] Build main application layout:
+  - [x] Sidebar with collapsible group tree
+  - [x] Main content area with entry list/cards
+  - [x] Breadcrumb navigation
+- [x] Implement entry list view:
+  - [x] Card view with icons
+  - [x] List view with columns (toggle)
+  - [x] Sorting (title, created, modified)
+- [x] Implement entry creation/editing form:
+  - [x] Title, Username, Password, URL, Notes fields
+  - [x] Password generator integration (Web Crypto, rejection-sampled)
+  - [x] Icon picker (KeePass standard icons)
+- [x] Add drag-and-drop for moving entries between groups (+ groups onto groups)
+- [x] Implement entry/group deletion with confirmation
 
-**Deliverable**: Full CRUD for entries and groups with tree navigation.
+**Deliverable**: Full CRUD for entries and groups with tree navigation. ✅
 
 ---
 

@@ -19,6 +19,14 @@ pub enum AppError {
     #[error("No database is open")]
     NoOpenDatabase,
 
+    /// A referenced entry or group UUID does not exist (or is malformed).
+    #[error("{0}")]
+    NotFound(String),
+
+    /// A requested edit is not allowed (e.g. deleting/moving the root group).
+    #[error("{0}")]
+    InvalidOperation(String),
+
     /// A KDBX parse/decrypt/serialize failure that isn't a wrong-credentials case
     /// (corrupt file, unsupported version, serialization error, etc.).
     #[error("{0}")]

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { TitleBar } from "@/components/TitleBar";
 import { UnlockScreen } from "@/components/UnlockScreen";
-import { VaultView } from "@/components/VaultView";
+import { MainLayout } from "@/components/MainLayout";
 import { useSessionStore } from "@/stores/sessionStore";
 import { lockDatabase, saveDatabase } from "@/services/tauri";
 
@@ -56,7 +56,7 @@ export default function App() {
     <div className="flex h-screen flex-col overflow-hidden bg-background-primary text-text-primary">
       <TitleBar />
       <main className="flex-1 overflow-hidden">
-        {isUnlocked ? <VaultView /> : <UnlockScreen />}
+        {isUnlocked ? <MainLayout /> : <UnlockScreen />}
       </main>
     </div>
   );

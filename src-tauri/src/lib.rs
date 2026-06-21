@@ -5,6 +5,7 @@
 
 mod commands;
 mod crypto;
+mod database;
 mod error;
 mod fs_ops;
 mod session;
@@ -53,6 +54,17 @@ pub fn run() {
             commands::save_database,
             commands::lock_database,
             commands::vault_status,
+            commands::get_database_tree,
+            commands::list_entries,
+            commands::get_entry,
+            commands::create_entry,
+            commands::update_entry,
+            commands::delete_entry,
+            commands::move_entry,
+            commands::create_group,
+            commands::rename_group,
+            commands::delete_group,
+            commands::move_group,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VaultPeer");
