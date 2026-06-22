@@ -18,6 +18,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
+# System-wide hotkeys for auto-type (PLAN Phase 6: Ctrl+Alt+A / Ctrl+Shift+A).
+# Cross-platform; the actual keystroke injection is Windows-only (see below).
+tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -36,6 +39,22 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 hmac = "0.12"
 sha1 = "0.10"
 sha2 = "0.10"
+
+# Windows-native integration for Phase 6: auto-type keystroke injection +
+# foreground window-title matching (ATY), and a protected clipboard that
+# excludes secrets from the Windows clipboard history / cloud sync (CLP-03).
+# Scoped to the Windows target so Linux/macOS dev builds are unaffected;
+# non-Windows code paths use stubs. `enigo` synthesises keystrokes; the
+# `windows` crate reads the foreground window title and drives the clipboard.
+[target.'cfg(windows)'.dependencies]
+enigo = "0.2"
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+] }
 
 [features]
 # This feature is used for production builds or when a dev server is not

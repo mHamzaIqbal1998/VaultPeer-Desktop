@@ -298,7 +298,7 @@ pub fn list_entries(db: &Database, group_uuid: &str) -> AppResult<Vec<EntrySumma
     Ok(entries)
 }
 
-fn entry_summary(e: &keepass::db::EntryRef<'_>, group_id: GroupId) -> EntrySummary {
+pub(crate) fn entry_summary(e: &keepass::db::EntryRef<'_>, group_id: GroupId) -> EntrySummary {
     EntrySummary {
         uuid: e.id().uuid().to_string(),
         group_uuid: group_id.uuid().to_string(),
@@ -433,8 +433,36 @@ pub fn update_entry(
 // ── Recycle bin ──────────────────────────────────────────────────────────────
 
 /// The recycle bin group's id, if one exists in this database.
-fn recycle_bin_id(db: &Database) -> Option<GroupId> {
+pub(crate) fn recycle_bin_id(db: &Database) -> Option<GroupId> {
     db.recycle_bin().map(|g| g.id())
+}
+
+/// True if `group_id` is the recycle bin or lives anywhere inside it. Used by
+/// search to skip trashed entries (PLAN Phase 6).
+pub(crate) fn is_in_recycle_bin(db: &Database, group_id: GroupId) -> bool {
+    match recycle_bin_id(db) {
+        Some(rb) => group_is_under(db, group_id, rb),
+        None => false,
+    }
+}
+
+/// Build a group's display name and its full root→…→group breadcrumb path
+/// (segments joined by " / "), used to give search hits context.
+pub(crate) fn group_name_and_path(db: &Database, group_id: GroupId) -> (String, String) {
+    let mut names: Vec<String> = Vec::new();
+    let mut cur = Some(group_id);
+    while let Some(id) = cur {
+        match db.group(id) {
+            Some(g) => {
+                names.push(g.name.clone());
+                cur = g.parent().map(|p| p.id());
+            }
+            None => break,
+        }
+    }
+    names.reverse();
+    let name = names.last().cloned().unwrap_or_default();
+    (name, names.join(" / "))
 }
 
 /// Whether the recycle bin is enabled for this database (default: enabled,
@@ -444,7 +472,7 @@ fn recycle_enabled(db: &Database) -> bool {
 }
 
 /// True if `group_id` is `ancestor` or lives anywhere beneath it.
-fn group_is_under(db: &Database, group_id: GroupId, ancestor: GroupId) -> bool {
+pub(crate) fn group_is_under(db: &Database, group_id: GroupId, ancestor: GroupId) -> bool {
     let mut cur = Some(group_id);
     while let Some(id) = cur {
         if id == ancestor {

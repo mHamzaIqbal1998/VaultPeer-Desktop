@@ -1,11 +1,24 @@
 import { useEffect, useState } from "react";
-import { saveDatabase, type EntryDetail as EntryDetailData } from "@/services/tauri";
+import { getEntry, saveDatabase, type EntryDetail as EntryDetailData } from "@/services/tauri";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useDatabaseStore } from "@/stores/databaseStore";
+import { copyToClipboard } from "@/lib/clipboard";
 import { GroupTree } from "./GroupTree";
 import { EntryList } from "./EntryList";
 import { EntryDetail } from "./EntryDetail";
 import { EntryEditor } from "./EntryEditor";
+
+/** True when focus is in a text field, so global copy hotkeys defer to it. */
+function isEditingText(): boolean {
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = el.tagName;
+  return (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    (el as HTMLElement).isContentEditable
+  );
+}
 
 type EditorState =
   | { open: true; entry: EntryDetailData | null }
@@ -48,6 +61,32 @@ export function MainLayout() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [selectedGroupUuid]);
+
+  // Ctrl+C / Ctrl+B: copy the selected entry's password / username (PRD §5.3 /
+  // CLP-01). Skipped while editing text or when the user has a selection, so
+  // normal copy still works.
+  useEffect(() => {
+    const handler = async (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key !== "c" && key !== "b") return;
+      if (!selectedEntryUuid || isEditingText()) return;
+      if (window.getSelection()?.toString()) return; // honour a real text selection
+      e.preventDefault();
+      try {
+        const detail = await getEntry(selectedEntryUuid);
+        if (key === "c") {
+          await copyToClipboard(detail.password, { label: "Password" });
+        } else {
+          await copyToClipboard(detail.username, { label: "Username" });
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedEntryUuid]);
 
   async function handleSave() {
     setSaving(true);

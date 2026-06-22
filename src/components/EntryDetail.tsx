@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   addAttachment,
+  autoTypeEntry,
   getAttachment,
   getEntry,
   openAttachmentDialog,
@@ -65,6 +66,7 @@ export function EntryDetail({ onEdit }: Props) {
   const [showHistory, setShowHistory] = useState(false);
   const [attachBusy, setAttachBusy] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const [autoTypeError, setAutoTypeError] = useState<string | null>(null);
 
   async function reload() {
     if (!selectedEntryUuid) return;
@@ -103,8 +105,8 @@ export function EntryDetail({ onEdit }: Props) {
     setCopied(what);
     window.setTimeout(() => setCopied((c) => (c === what ? null : c)), 1200);
   };
-  const copy = async (what: string, value: string) => {
-    if (value && (await copyToClipboard(value))) flash(what);
+  const copy = async (what: string, value: string, label: string) => {
+    if (value && (await copyToClipboard(value, { label }))) flash(what);
   };
 
   async function handleAddAttachment() {
@@ -224,7 +226,7 @@ export function EntryDetail({ onEdit }: Props) {
             label="Username"
             value={detail.username}
             flashed={copied === "user"}
-            onCopy={() => copy("user", detail.username)}
+            onCopy={() => copy("user", detail.username, "Username")}
           />
 
           <div className="mb-3">
@@ -244,7 +246,7 @@ export function EntryDetail({ onEdit }: Props) {
                 <IconAction
                   label="Copy password"
                   flashed={copied === "pass"}
-                  onClick={() => copy("pass", detail.password)}
+                  onClick={() => copy("pass", detail.password, "Password")}
                 >
                   <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.8" />
                   <path d="M5 15V5a2 2 0 0 1 2-2h8" stroke="currentColor" strokeWidth="1.8" />
@@ -263,7 +265,7 @@ export function EntryDetail({ onEdit }: Props) {
             value={detail.url}
             isLink
             flashed={copied === "url"}
-            onCopy={() => copy("url", detail.url)}
+            onCopy={() => copy("url", detail.url, "URL")}
           />
 
           {detail.notes && (
@@ -303,7 +305,7 @@ export function EntryDetail({ onEdit }: Props) {
                         <IconAction
                           label={`Copy ${cf.key}`}
                           flashed={copied === `cf:${cf.key}`}
-                          onClick={() => copy(`cf:${cf.key}`, cf.value)}
+                          onClick={() => copy(`cf:${cf.key}`, cf.value, cf.key)}
                         >
                           <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.8" />
                           <path d="M5 15V5a2 2 0 0 1 2-2h8" stroke="currentColor" strokeWidth="1.8" />
@@ -413,6 +415,12 @@ export function EntryDetail({ onEdit }: Props) {
         </div>
       )}
 
+      {autoTypeError && (
+        <div className="border-t border-status-error/30 bg-status-error/10 px-4 py-2 text-xs text-status-error">
+          {autoTypeError}
+        </div>
+      )}
+
       {detail && (
         <div className="flex gap-2 border-t border-border-sage px-4 py-3">
           {inRecycleBin ? (
@@ -442,6 +450,25 @@ export function EntryDetail({ onEdit }: Props) {
                 className="flex-1 rounded-lg bg-accent-mint px-3 py-2 text-sm font-semibold text-background-primary transition-opacity hover:opacity-90"
               >
                 Edit
+              </button>
+              <button
+                type="button"
+                title="Auto-type into the previously focused window (Windows)"
+                aria-label="Auto-type"
+                onClick={async () => {
+                  setAutoTypeError(null);
+                  try {
+                    await autoTypeEntry(detail.uuid);
+                  } catch (e) {
+                    setAutoTypeError(String(e));
+                  }
+                }}
+                className="grid w-10 place-items-center rounded-lg border border-border-sage text-text-muted transition-colors hover:border-accent-mint/50 hover:text-accent-mint"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" strokeWidth="1.7" />
+                  <path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                </svg>
               </button>
               <button
                 type="button"

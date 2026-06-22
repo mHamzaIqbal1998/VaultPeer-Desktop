@@ -190,7 +190,7 @@ function isExpired(e: EntrySummary): boolean {
 async function copyPassword(uuid: string): Promise<boolean> {
   try {
     const detail = await getEntry(uuid);
-    return copyToClipboard(detail.password);
+    return copyToClipboard(detail.password, { label: "Password" });
   } catch {
     return false;
   }
@@ -250,7 +250,7 @@ function EntryCard({
           disabled={!entry.username}
           flashed={copied === "user"}
           onCopy={async () => {
-            if (await copyToClipboard(entry.username)) flash("user");
+            if (await copyToClipboard(entry.username, { label: "Username" })) flash("user");
           }}
         >
           User
@@ -349,7 +349,7 @@ function EntryRow({
           disabled={!entry.username}
           flashed={copied === "user"}
           onCopy={async () => {
-            if (await copyToClipboard(entry.username)) flash("user");
+            if (await copyToClipboard(entry.username, { label: "Username" })) flash("user");
           }}
         >
           User

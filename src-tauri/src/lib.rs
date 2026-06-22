@@ -3,12 +3,15 @@
 //! `run()` is the shared entrypoint invoked by `main.rs` (desktop) and is kept
 //! library-side so it can also back a future mobile target.
 
+mod autotype;
+mod clipboard;
 mod commands;
 mod crypto;
 mod database;
 mod error;
 mod fs_ops;
 mod otp;
+mod search;
 mod session;
 mod tray;
 
@@ -18,7 +21,22 @@ use crate::session::VaultSession;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    // Global auto-type hotkeys (PLAN Phase 6): Ctrl+Alt+A types the matched
+    // entry; Ctrl+Alt+P types only its password (selective). Ctrl+Alt+P is used
+    // instead of Ctrl+Shift+A because browsers grab the latter (Chrome's
+    // "Search tabs"), which blocks the global registration.
+    #[cfg(desktop)]
+    let autotype_shortcut = tauri_plugin_global_shortcut::Shortcut::new(
+        Some(tauri_plugin_global_shortcut::Modifiers::CONTROL | tauri_plugin_global_shortcut::Modifiers::ALT),
+        tauri_plugin_global_shortcut::Code::KeyA,
+    );
+    #[cfg(desktop)]
+    let selective_shortcut = tauri_plugin_global_shortcut::Shortcut::new(
+        Some(tauri_plugin_global_shortcut::Modifiers::CONTROL | tauri_plugin_global_shortcut::Modifiers::ALT),
+        tauri_plugin_global_shortcut::Code::KeyP,
+    );
+
+    let mut builder = tauri::Builder::default()
         // Ensure a second launch focuses the existing window instead of
         // opening a duplicate (PLAN Phase 1: single instance).
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -28,11 +46,53 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+
+    // The global-shortcut plugin is desktop-only; its handler dispatches
+    // auto-type for the currently-focused window (works even when the app is
+    // hidden/unfocused, which is the whole point of system-wide hotkeys).
+    // `Shortcut` is `Copy`, so the `move` handler copies these in while the
+    // originals remain available for registration in `setup` below.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(move |app, shortcut, event| {
+                    if event.state() != tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        return;
+                    }
+                    let selective = shortcut == &selective_shortcut;
+                    if shortcut == &autotype_shortcut || selective {
+                        commands::handle_global_autotype(app, selective);
+                    }
+                })
+                .build(),
+        );
+    }
+
+    builder
         // Holds the single unlocked database for the session (Phase 2).
         .manage(VaultSession::default())
-        .setup(|app| {
+        // Remembers the window focused at auto-type hotkey time (Phase 6).
+        .manage(autotype::AutoTypeTarget::default())
+        .setup(move |app| {
             tray::create_tray(app.handle())?;
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                // Registration can fail if another app already owns the combo;
+                // that's non-fatal (auto-type just won't fire on that hotkey),
+                // but log it so the cause isn't a mystery.
+                if let Err(e) = app.global_shortcut().register(autotype_shortcut) {
+                    eprintln!("[vaultpeer] could not register Ctrl+Alt+A (auto-type): {e}");
+                }
+                if let Err(e) = app.global_shortcut().register(selective_shortcut) {
+                    eprintln!(
+                        "[vaultpeer] could not register Ctrl+Alt+P (selective auto-type): {e} \
+                         — another app likely owns this combo"
+                    );
+                }
+            }
             Ok(())
         })
         // Hide the window to the tray instead of quitting on the close button.
@@ -78,6 +138,13 @@ pub fn run() {
             commands::delete_entry_history,
             commands::all_tags,
             commands::generate_totp,
+            commands::search_database,
+            commands::recent_entries,
+            commands::set_tray_recent,
+            commands::auto_type,
+            commands::auto_type_entry,
+            commands::auto_type_to_window,
+            commands::copy_clipboard,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VaultPeer");

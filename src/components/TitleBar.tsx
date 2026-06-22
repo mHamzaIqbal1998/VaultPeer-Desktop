@@ -1,5 +1,6 @@
 import { WindowControls } from "./WindowControls";
 import { ThemeToggle } from "./ThemeToggle";
+import { ClipboardIndicator } from "./ClipboardIndicator";
 import { useSessionStore } from "@/stores/sessionStore";
 import { lockDatabase } from "@/services/tauri";
 
@@ -11,9 +12,11 @@ import { lockDatabase } from "@/services/tauri";
 interface TitleBarProps {
   /** Open the standalone password generator tool (PLAN Phase 5). */
   onOpenGenerator?: () => void;
+  /** Open the global search overlay (PLAN Phase 6); undefined when locked. */
+  onOpenSearch?: () => void;
 }
 
-export function TitleBar({ onOpenGenerator }: TitleBarProps) {
+export function TitleBar({ onOpenGenerator, onOpenSearch }: TitleBarProps) {
   const metadata = useSessionStore((s) => s.metadata);
   const setLocked = useSessionStore((s) => s.setLocked);
   const isUnlocked = metadata !== null;
@@ -50,11 +53,13 @@ export function TitleBar({ onOpenGenerator }: TitleBarProps) {
         </span>
       </div>
 
-      {/* Search bar (wired up in Phase 6) */}
+      {/* Global search (Ctrl+K) — disabled until a database is unlocked. */}
       <div data-tauri-drag-region className="flex flex-1 justify-center px-4">
         <button
           type="button"
-          className="flex h-7 w-full max-w-md items-center gap-2 rounded-md border border-border-sage bg-background-primary px-3 text-text-muted transition-colors hover:border-accent-mint/40"
+          onClick={onOpenSearch}
+          disabled={!onOpenSearch}
+          className="flex h-7 w-full max-w-md items-center gap-2 rounded-md border border-border-sage bg-background-primary px-3 text-text-muted transition-colors hover:border-accent-mint/40 disabled:cursor-default disabled:opacity-50 disabled:hover:border-border-sage"
           title="Search (Ctrl+K)"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -71,6 +76,7 @@ export function TitleBar({ onOpenGenerator }: TitleBarProps) {
       {/* Right-side actions + window controls */}
       <div className="flex items-stretch">
         <div className="flex items-center gap-1 px-2">
+          <ClipboardIndicator />
           <ActionButton label="Password generator (Ctrl+G)" onClick={onOpenGenerator}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
               <path d="M14 7l3-3 3 3-3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />

@@ -288,31 +288,33 @@ A refined adaptation of the mobile Cyber-Sage aesthetic optimized for desktop in
 
 **Focus**: Discovery features and Windows integration.
 
-- [ ] Implement search:
-  - [ ] Global search across all fields
-  - [ ] Fuzzy matching with highlighting
-  - [ ] Search-as-you-type with debouncing
-  - [ ] Advanced filters (group, tag, URL)
-- [ ] Build search UI:
-  - [ ] Search bar in title bar (Ctrl+K)
-  - [ ] Search results with context snippets
-  - [ ] Quick navigation to entry
-- [ ] Implement clipboard operations:
-  - [ ] Copy username/password with hotkeys
-  - [ ] Auto-clear clipboard after timeout
-  - [ ] Protected clipboard (exclude from managers)
-- [ ] Implement auto-type:
-  - [ ] Global hotkey registration (Ctrl+Alt+A)
-  - [ ] Window title matching
-  - [ ] Auto-type sequence: `{USERNAME}{TAB}{PASSWORD}{ENTER}`
-  - [ ] Custom sequences per entry
-  - [ ] Target window selection dialog
-- [ ] Add system tray menu:
-  - [ ] Quick access to recent entries
-  - [ ] Lock database
-  - [ ] Quit application
+- [x] Implement search:
+  - [x] Global search across all fields (native Rust fuzzy matcher in `search.rs` over title/username/URL/notes/tags/custom field names+values; recycle bin excluded; 6 unit tests)
+  - [x] Fuzzy matching with highlighting (substring + subsequence scoring with start/word-boundary bonuses; match highlight in `SearchModal`)
+  - [x] Search-as-you-type with debouncing (150ms debounce in `SearchModal`)
+  - [x] Advanced filters (group, tag, URL) (current-group scope toggle + tag chips in the modal; `SearchFilters`; URL is a first-class searchable field)
+- [x] Build search UI:
+  - [x] Search bar in title bar (Ctrl+K) (`SearchModal.tsx`, opens from the title-bar search button or Ctrl+K)
+  - [x] Search results with context snippets (group breadcrumb + matched-field label & snippet per hit)
+  - [x] Quick navigation to entry (`openEntry` reveals the group then selects the entry; full ↑/↓/Enter/Esc keyboard control)
+- [x] Implement clipboard operations:
+  - [x] Copy username/password with hotkeys (Ctrl+B username, Ctrl+C password on the selected entry; defers to real text selections / inputs)
+  - [x] Auto-clear clipboard after timeout (`lib/clipboard.ts`, 30s default, only wipes our own value; live countdown pill `ClipboardIndicator`)
+  - [x] Protected clipboard (exclude from managers) (native Windows `clipboard.rs`: `ExcludeClipboardContentFromMonitorProcessing` + history/cloud opt-out; Web Clipboard fallback off-Windows)
+- [x] Implement auto-type:
+  - [x] Global hotkey registration (Ctrl+Alt+A) (`tauri-plugin-global-shortcut`; + Ctrl+Alt+P for selective/password-only. Hotkey modifiers are released before injecting so an injected Tab isn't read as Alt+Tab.)
+  - [x] Window title matching (`search::match_entry_for_window` — longest title / URL-host substring match against the foreground window)
+  - [x] Auto-type sequence (token+literal parser in `autotype.rs`; supports `{USERNAME}`,`{PASSWORD}`,`{TITLE}`,`{URL}`,`{TOTP}`,`{TAB}`,`{ENTER}`; keystrokes via `enigo`; 4 unit tests). Default `{USERNAME}{TAB}{PASSWORD}` does **not** auto-submit; add `{ENTER}` via a custom sequence to submit.
+  - [x] Custom sequences per entry (read from an "AutoType Sequence" custom field, falling back to the default)
+  - [x] Target window selection dialog (in-app "Auto-Type" action on the entry detail hides the window so the previously-active app regains focus, then types into it)
+- [x] Add system tray menu:
+  - [x] Quick access to recent entries (dynamic recent-entries section rebuilt via `set_tray_recent`; clicking one copies that entry's password)
+  - [x] Lock database
+  - [x] Quit application
 
-**Deliverable**: Complete Windows integration with search, clipboard, and auto-type.
+**Deliverable**: Complete Windows integration with search, clipboard, and auto-type. ✅
+
+> Note: keystroke injection (auto-type) and clipboard-history exclusion are inherently Windows-native and run only on the Windows V1 target; they compile everywhere (non-Windows uses safe stubs that fall back to the Web Clipboard API / report "Windows only"). The Windows FFI (`enigo` + `windows` crate) was verified to compile against the `x86_64-pc-windows-gnu` target.
 
 ---
 

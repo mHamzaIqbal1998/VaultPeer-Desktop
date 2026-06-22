@@ -52,6 +52,8 @@ interface DatabaseState {
 
   selectGroup: (uuid: string) => Promise<void>;
   selectEntry: (uuid: string | null) => void;
+  /** Reveal an entry: switch to its group (loading entries) then select it. */
+  openEntry: (groupUuid: string, entryUuid: string) => Promise<void>;
   refreshTree: () => Promise<void>;
   refreshEntries: () => Promise<void>;
   refreshTags: () => Promise<void>;
@@ -157,6 +159,13 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   },
 
   selectEntry: (uuid) => set({ selectedEntryUuid: uuid }),
+
+  openEntry: async (groupUuid, entryUuid) => {
+    if (get().selectedGroupUuid !== groupUuid) {
+      await get().selectGroup(groupUuid);
+    }
+    set({ selectedEntryUuid: entryUuid });
+  },
 
   refreshTree: async () => {
     try {

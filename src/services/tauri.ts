@@ -529,6 +529,108 @@ export async function generateTotp(otp: string): Promise<TotpCode> {
   return invoke<TotpCode>("generate_totp", { otp });
 }
 
+// ── Phase 6: search, clipboard & auto-type ───────────────────────────────────
+
+/** Optional filters narrowing a search (mirrors Rust `SearchFilters`). */
+export interface SearchFilters {
+  /** Restrict results to this group and its descendants. */
+  groupUuid?: string | null;
+  /** Require this exact tag on the entry. */
+  tag?: string | null;
+  /** Include entries living in the recycle bin (default: excluded). */
+  includeRecycleBin?: boolean;
+}
+
+/** One ranked search result with group context (mirrors Rust `SearchHit`). */
+export interface SearchHit {
+  entry: EntrySummary;
+  /** Display name of the entry's group. */
+  groupName: string;
+  /** Full root→…→group breadcrumb path. */
+  groupPath: string;
+  /** Human label of the field that matched (e.g. "Title", "Notes"). */
+  matchedField: string;
+  /** Short context snippet around the match. */
+  snippet: string;
+  score: number;
+}
+
+/** A lightweight entry reference for the tray quick-access menu. */
+export interface TrayEntry {
+  uuid: string;
+  title: string;
+}
+
+/** Payload of the `vault://autotype` event (mirrors Rust `AutoTypeStatus`). */
+export interface AutoTypeStatus {
+  /** "typed" (success), "error" (failure/unsupported), or "pick" (no match). */
+  kind: "typed" | "error" | "pick";
+  message: string;
+  /** Title of the window that was focused when the hotkey fired. */
+  windowTitle: string;
+  /** Whether selective (password-only) auto-type was requested. */
+  selective: boolean;
+}
+
+/** Tauri event name for auto-type status / picker requests. */
+export const AUTOTYPE_EVENT = "vault://autotype";
+
+/**
+ * Fuzzy-search the open database across all searchable fields, returning ranked
+ * hits with group context and a match snippet (SRC-01/02/03).
+ */
+export async function searchDatabase(
+  query: string,
+  filters: SearchFilters = {},
+): Promise<SearchHit[]> {
+  return invoke<SearchHit[]>("search_database", { query, filters });
+}
+
+/** The most-recently-modified entries across the vault (for the tray menu). */
+export async function recentEntries(limit: number): Promise<EntrySummary[]> {
+  return invoke<EntrySummary[]>("recent_entries", { limit });
+}
+
+/** Rebuild the tray's recent-entries quick-access section (empty clears it). */
+export async function setTrayRecent(entries: TrayEntry[]): Promise<void> {
+  await invoke("set_tray_recent", { entries });
+}
+
+/**
+ * Copy text to the clipboard with history/cloud exclusion (CLP-03). Windows-
+ * only; rejects elsewhere so callers can fall back to the Web Clipboard API.
+ */
+export async function copyClipboardProtected(text: string): Promise<void> {
+  await invoke("copy_clipboard", { text });
+}
+
+/**
+ * Trigger window-matched auto-type into the currently-focused window (ATY-01).
+ * `selective` types only the password. Windows-only; errors elsewhere.
+ */
+export async function autoType(selective = false): Promise<void> {
+  await invoke("auto_type", { selective });
+}
+
+/**
+ * Auto-type a specific entry: hides the app window so the previously-focused
+ * app regains focus, then replays the entry's sequence. Windows-only.
+ */
+export async function autoTypeEntry(entryUuid: string): Promise<void> {
+  await invoke("auto_type_entry", { entryUuid });
+}
+
+/**
+ * Auto-type a chosen entry into the window captured when the hotkey fired
+ * (used by the fallback picker). Re-focuses that window, then types.
+ */
+export async function autoTypeToWindow(
+  entryUuid: string,
+  selective: boolean,
+): Promise<void> {
+  await invoke("auto_type_to_window", { entryUuid, selective });
+}
+
 /** Read raw bytes from a file. */
 export async function readFile(path: string): Promise<Uint8Array> {
   const bytes = await invoke<number[]>("read_file", { path });
