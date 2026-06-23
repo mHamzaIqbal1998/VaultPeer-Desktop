@@ -10,6 +10,7 @@ import {
 } from "@/services/tauri";
 import { PasswordField } from "./PasswordField";
 import { StrengthMeter } from "./StrengthMeter";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 interface Props {
   onClose: () => void;
@@ -28,7 +29,11 @@ export function CreateDatabaseDialog({ onClose, onCreated }: Props) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [keyFile, setKeyFile] = useState<string | null>(null);
-  const [options, setOptions] = useState<CreateOptions>(DEFAULT_CREATE_OPTIONS);
+  // Pre-fill encryption settings from the user's saved defaults (SET-06).
+  const defaultOptions = useSettingsStore((s) => s.settings.defaultCreateOptions);
+  const [options, setOptions] = useState<CreateOptions>(
+    () => defaultOptions ?? DEFAULT_CREATE_OPTIONS,
+  );
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

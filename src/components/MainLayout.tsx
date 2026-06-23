@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { getEntry, saveDatabase, type EntryDetail as EntryDetailData } from "@/services/tauri";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { useDatabaseStore } from "@/stores/databaseStore";
 import { copyToClipboard } from "@/lib/clipboard";
+import { matchesAccelerator } from "@/lib/shortcuts";
 import { GroupTree } from "./GroupTree";
 import { EntryList } from "./EntryList";
 import { EntryDetail } from "./EntryDetail";
@@ -39,6 +41,7 @@ export function MainLayout() {
   const selectedGroupUuid = useDatabaseStore((s) => s.selectedGroupUuid);
   const selectedEntryUuid = useDatabaseStore((s) => s.selectedEntryUuid);
   const error = useDatabaseStore((s) => s.error);
+  const shortcuts = useSettingsStore((s) => s.settings.shortcuts);
 
   const [editor, setEditor] = useState<EditorState>({ open: false });
   const [saving, setSaving] = useState(false);
@@ -50,32 +53,32 @@ export function MainLayout() {
     return () => reset();
   }, [init, reset]);
 
-  // Ctrl+N: create a new entry in the current group (PRD §5.3).
+  // New-entry shortcut (default Ctrl+N) in the current group (PRD §5.3).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key === "n" || e.key === "N")) {
+      if (matchesAccelerator(e, shortcuts.newEntry)) {
         e.preventDefault();
         if (selectedGroupUuid) setEditor({ open: true, entry: null });
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedGroupUuid]);
+  }, [selectedGroupUuid, shortcuts.newEntry]);
 
-  // Ctrl+C / Ctrl+B: copy the selected entry's password / username (PRD §5.3 /
-  // CLP-01). Skipped while editing text or when the user has a selection, so
-  // normal copy still works.
+  // Copy password / username shortcuts (default Ctrl+C / Ctrl+B) for the
+  // selected entry (PRD §5.3 / CLP-01). Skipped while editing text or when the
+  // user has a real text selection, so normal copy still works.
   useEffect(() => {
     const handler = async (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
-      const key = e.key.toLowerCase();
-      if (key !== "c" && key !== "b") return;
+      const wantsPassword = matchesAccelerator(e, shortcuts.copyPassword);
+      const wantsUsername = matchesAccelerator(e, shortcuts.copyUsername);
+      if (!wantsPassword && !wantsUsername) return;
       if (!selectedEntryUuid || isEditingText()) return;
       if (window.getSelection()?.toString()) return; // honour a real text selection
       e.preventDefault();
       try {
         const detail = await getEntry(selectedEntryUuid);
-        if (key === "c") {
+        if (wantsPassword) {
           await copyToClipboard(detail.password, { label: "Password" });
         } else {
           await copyToClipboard(detail.username, { label: "Username" });
@@ -86,7 +89,7 @@ export function MainLayout() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedEntryUuid]);
+  }, [selectedEntryUuid, shortcuts.copyPassword, shortcuts.copyUsername]);
 
   async function handleSave() {
     setSaving(true);

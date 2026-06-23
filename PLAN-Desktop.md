@@ -322,31 +322,40 @@ A refined adaptation of the mobile Cyber-Sage aesthetic optimized for desktop in
 
 **Focus**: Application configuration and customization.
 
-- [ ] Build settings architecture:
-  - [ ] Rust-based settings storage (JSON file in AppData)
-  - [ ] Settings migration/versioning
-- [ ] Implement Database Settings tab:
-  - [ ] Default KDF and cipher selection
-  - [ ] KDF parameter tuning (rounds, memory, parallelism)
-  - [ ] KDF benchmark tool ("Calculate for 1.0s")
-  - [ ] Compression setting (GZip/None)
-  - [ ] Recycle bin configuration
-  - [ ] History settings (max items, max size)
-  - [ ] Database maintenance (cleanup)
-- [ ] Implement App Settings tab:
-  - [ ] Theme selection (Dark/Light/System)
-  - [ ] Auto-lock timeout (1 min - 1 hour, or Never)
-  - [ ] Clipboard clear timeout (10s - 5 min, or Never)
-  - [ ] Minimize to tray behavior
-  - [ ] Start with Windows toggle
-  - [ ] Default password generator settings
-  - [ ] Keyboard shortcut customization
-- [ ] Implement Security Settings:
-  - [ ] Windows Hello / biometric setup
-  - [ ] Emergency export
-  - [ ] Clear all recent files history
+- [x] Build settings architecture:
+  - [x] Rust-based settings storage (JSON file in AppData) (`settings.rs` → `settings.json` in `app_config_dir`, `SettingsState` Tauri-managed, atomic write; frontend `settingsStore` mirrors it)
+  - [x] Settings migration/versioning (`version` field + `migrate()`; `serde(default)` backfills new fields so older files upgrade losslessly; 4 unit tests)
+- [x] Implement Database Settings tab (`SettingsPanel` → Database tab; edits the open vault and re-saves to re-encrypt):
+  - [x] Default KDF and cipher selection (open-DB editor via `get_db_settings`/`update_db_settings`; **plus** "Defaults for new databases" editor persisting `defaultCreateOptions`, consumed by `CreateDatabaseDialog`)
+  - [x] KDF parameter tuning (rounds, memory, parallelism)
+  - [x] KDF benchmark tool ("Calculate for 1.0s") (`kdf_benchmark` command → `crypto::benchmark_kdf_iterations`, times one Argon2 pass and scales)
+  - [x] Compression setting (GZip/None)
+  - [x] Recycle bin configuration (`db.meta.recyclebin_enabled`)
+  - [x] History settings (max items, max size) (`db.meta.history_max_items`/`history_max_size`)
+  - [x] Database maintenance (cleanup) (`db_maintenance` → `database::maintenance_cleanup` trims per-entry history to the item/size limits; reports what was pruned)
+- [x] Implement App Settings tab:
+  - [x] Theme selection (Dark/Light/System) (segmented control → `themeStore` + persisted in settings)
+  - [x] Auto-lock timeout (1 min - 1 hour, or Never) (idle-timer in `App.tsx` on `autoLockSeconds`; resets on any input, locks on elapse)
+  - [x] Clipboard clear timeout (10s - 5 min, or Never) (`lib/clipboard.ts` reads `clipboardClearSeconds`)
+  - [x] Minimize to tray behavior (`minimizeToTray`; the Rust window-close handler reads `SettingsState` — hides to tray when on, quits when off)
+  - [x] Start with Windows toggle (`autostart.rs` HKCU `…\Run` registry entry; Windows-only with stub elsewhere; verified to compile against `x86_64-pc-windows-gnu`)
+  - [x] Default password generator settings (`generator` defaults; seed `PasswordGenerator`)
+  - [x] Keyboard shortcut customization (`ShortcutBindings` + `lib/shortcuts.ts`; capture/match accelerators; `App.tsx` & `MainLayout` handlers honour them. Global auto-type hotkeys remain fixed/native)
+- [x] Implement Security Settings:
+  - [x] Windows Hello / biometric setup (`biometric.rs`: DPAPI-protected master password + `UserConsentVerifier` consent gate; enroll/forget in Security tab, "Unlock with Windows Hello" on the unlock screen; Windows-only, FFI verified against `x86_64-pc-windows-gnu`)
+  - [x] Emergency export (`export.rs` CSV + XML of the decrypted vault, recycle-bin excluded; `export_database` command + unencrypted-warning UI; 3 unit tests)
+  - [x] Clear all recent files history (`vaultStore.clearRecentFiles` from the Security tab)
 
-**Deliverable**: Comprehensive settings matching mobile app capabilities.
+**Deliverable**: Comprehensive settings matching mobile app capabilities. ✅
+
+> Note: settings persist to `settings.json` and quick-unlock credentials to
+> `quickunlock.json`, both under the per-user app-config dir. Auto-lock,
+> minimize-to-tray, clipboard-clear, default generator/create options, and
+> custom in-app shortcuts are all wired to live settings. The Windows-native
+> pieces (Start-with-Windows registry entry, DPAPI + Windows Hello quick-unlock)
+> compile everywhere — non-Windows builds use safe stubs that report the feature
+> is Windows-only — and the Windows FFI was type-checked against the
+> `x86_64-pc-windows-gnu` target.
 
 ---
 

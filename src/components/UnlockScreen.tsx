@@ -1,9 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   openDatabaseDialog,
   openKeyFileDialog,
   unlockDatabase,
+  biometricAvailable,
+  biometricIsEnrolled,
+  biometricUnlock,
 } from "@/services/tauri";
 import { useVaultStore } from "@/stores/vaultStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -31,6 +34,45 @@ export function UnlockScreen() {
   const [keyFile, setKeyFile] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  /** True when the selected DB has a Windows Hello quick-unlock credential. */
+  const [helloEnrolled, setHelloEnrolled] = useState(false);
+
+  // When a database is selected, check whether it's enrolled for Windows Hello
+  // quick-unlock (and Hello is available) so we can offer the shortcut.
+  useEffect(() => {
+    let cancelled = false;
+    setHelloEnrolled(false);
+    if (!selectedPath) return;
+    void (async () => {
+      try {
+        const [available, enrolled] = await Promise.all([
+          biometricAvailable(),
+          biometricIsEnrolled(selectedPath),
+        ]);
+        if (!cancelled) setHelloEnrolled(available && enrolled);
+      } catch {
+        /* biometric unsupported — leave the option hidden */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPath]);
+
+  async function handleBiometricUnlock() {
+    if (!selectedPath) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const meta = await biometricUnlock(selectedPath);
+      addRecentFile(selectedPath);
+      setUnlocked(meta);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   function resetForm() {
     setPassword("");
@@ -106,6 +148,8 @@ export function UnlockScreen() {
             onBack={handleBack}
             busy={busy}
             error={error}
+            helloEnrolled={helloEnrolled}
+            onBiometric={handleBiometricUnlock}
           />
         ) : (
           <Landing
@@ -178,6 +222,8 @@ interface UnlockFormProps {
   onBack: () => void;
   busy: boolean;
   error: string | null;
+  helloEnrolled: boolean;
+  onBiometric: () => void;
 }
 
 function UnlockForm({
@@ -191,6 +237,8 @@ function UnlockForm({
   onBack,
   busy,
   error,
+  helloEnrolled,
+  onBiometric,
 }: UnlockFormProps) {
   return (
     <div className="space-y-4 rounded-xl border border-border-sage bg-surface-card p-5">
@@ -288,6 +336,26 @@ function UnlockForm({
       >
         {busy ? "Unlocking…" : "Unlock"}
       </button>
+
+      {helloEnrolled && (
+        <button
+          type="button"
+          onClick={onBiometric}
+          disabled={busy}
+          className="flex w-full items-center justify-center gap-2 rounded-lg border border-border-sage bg-surface-elevated px-4 py-2.5 text-sm font-medium text-text-primary transition-colors hover:border-accent-mint/40 disabled:opacity-50"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path
+              d="M12 11c-1.5 0-2.5 1-2.5 2.5V17M7 9.5a5 5 0 0 1 9-2M5 12a7 7 0 0 1 .5-2.6M12 14v3m4-5.5V17M9 20c-.8-.8-1.5-2-1.5-4"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          Unlock with Windows Hello
+        </button>
+      )}
     </div>
   );
 }

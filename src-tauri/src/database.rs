@@ -871,6 +871,142 @@ pub fn delete_entry_history(db: &mut Database, entry_uuid: &str, index: usize) -
     Ok(())
 }
 
+// ── Database-level settings & maintenance (PLAN Phase 7) ──────────────────────
+
+/// Database-level (KDBX meta) settings the user can tune: recycle-bin behaviour
+/// and history retention limits. Mirrors the relevant `keepass::db::Meta` fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DbMetaSettings {
+    /// Whether deletions go to the recycle bin (true) or are permanent (false).
+    pub recycle_bin_enabled: bool,
+    /// Max history snapshots kept per entry; `-1` means unlimited (KeePass).
+    pub history_max_items: i64,
+    /// Max total history size per entry in MiB; `-1` means unlimited.
+    pub history_max_size_mib: i64,
+}
+
+impl Default for DbMetaSettings {
+    fn default() -> Self {
+        // KeePass defaults: recycle bin on, 10 history items, ~6 MiB history.
+        Self {
+            recycle_bin_enabled: true,
+            history_max_items: 10,
+            history_max_size_mib: 6,
+        }
+    }
+}
+
+const MIB: i64 = 1024 * 1024;
+
+/// Read the database's current recycle-bin / history settings.
+pub fn read_db_meta_settings(db: &Database) -> DbMetaSettings {
+    let recycle_bin_enabled = db.meta.recyclebin_enabled != Some(false);
+    let history_max_items = db.meta.history_max_items.map(|v| v as i64).unwrap_or(-1);
+    let history_max_size_mib = match db.meta.history_max_size {
+        Some(bytes) if bytes >= 0 => (bytes as i64) / MIB,
+        Some(_) => -1,
+        None => -1,
+    };
+    DbMetaSettings {
+        recycle_bin_enabled,
+        history_max_items,
+        history_max_size_mib,
+    }
+}
+
+/// Apply recycle-bin / history settings onto the database metadata, stamping the
+/// settings-changed timestamp. Persisted on the next save.
+pub fn apply_db_meta_settings(db: &mut Database, s: &DbMetaSettings) -> AppResult<()> {
+    db.meta.recyclebin_enabled = Some(s.recycle_bin_enabled);
+    db.meta.history_max_items = Some(s.history_max_items as isize);
+    db.meta.history_max_size = Some(if s.history_max_size_mib < 0 {
+        -1
+    } else {
+        (s.history_max_size_mib * MIB) as isize
+    });
+    db.meta.settings_changed = Some(Times::now());
+    Ok(())
+}
+
+/// Summary of what a maintenance pass removed (for user feedback).
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaintenanceReport {
+    /// Number of history snapshots pruned across all entries.
+    pub history_snapshots_removed: usize,
+    /// Number of entries whose history was trimmed.
+    pub entries_trimmed: usize,
+}
+
+/// Approximate byte size of one history snapshot (sum of field value lengths).
+fn snapshot_size(e: &Entry) -> usize {
+    e.fields.values().map(|v| v.as_str().len()).sum()
+}
+
+/// Trim every entry's history to the database's configured retention limits
+/// (max item count and/or max total size), keeping the newest snapshots. This
+/// is the "Database maintenance (cleanup)" action (PLAN Phase 7).
+pub fn maintenance_cleanup(db: &mut Database) -> AppResult<MaintenanceReport> {
+    let settings = read_db_meta_settings(db);
+    let max_items = settings.history_max_items;
+    let max_bytes: i64 = if settings.history_max_size_mib < 0 {
+        -1
+    } else {
+        settings.history_max_size_mib * MIB
+    };
+
+    let mut report = MaintenanceReport::default();
+
+    let entry_ids: Vec<EntryId> = db.iter_all_entries().map(|e| e.id()).collect();
+    for eid in entry_ids {
+        // Snapshot the (newest-first) history out, decide what to keep.
+        let snapshots: Vec<Entry> = match db.entry(eid).and_then(|e| e.history.clone()) {
+            Some(h) => h.get_entries().to_vec(),
+            None => continue,
+        };
+        if snapshots.is_empty() {
+            continue;
+        }
+
+        let mut kept: Vec<Entry> = Vec::with_capacity(snapshots.len());
+        let mut running: i64 = 0;
+        for snap in snapshots.iter() {
+            // Enforce the item-count cap (newest kept first).
+            if max_items >= 0 && kept.len() as i64 >= max_items {
+                break;
+            }
+            // Enforce the total-size cap.
+            if max_bytes >= 0 {
+                let size = snapshot_size(snap) as i64;
+                if !kept.is_empty() && running + size > max_bytes {
+                    break;
+                }
+                running += size;
+            }
+            kept.push(snap.clone());
+        }
+
+        if kept.len() == snapshots.len() {
+            continue; // nothing to trim for this entry
+        }
+
+        report.history_snapshots_removed += snapshots.len() - kept.len();
+        report.entries_trimmed += 1;
+
+        // Rebuild oldest-first (add_entry pushes to the front).
+        let mut rebuilt = History::default();
+        for snap in kept.into_iter().rev() {
+            rebuilt.add_entry(snap);
+        }
+        if let Some(mut e) = db.entry_mut(eid) {
+            e.history = Some(rebuilt);
+        }
+    }
+
+    Ok(report)
+}
+
 /// Collect every distinct tag used across all entries in the database, sorted
 /// case-insensitively. Powers tag autocomplete and the tag filter.
 pub fn all_tags(db: &Database) -> Vec<String> {

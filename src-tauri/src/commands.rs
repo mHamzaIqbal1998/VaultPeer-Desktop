@@ -11,13 +11,15 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use crate::autotype::{self, AutoTypeTarget, TypeFields};
 use crate::crypto::{self, CreateOptions, DatabaseMetadata};
 use crate::database::{
-    self, AttachmentMeta, DatabaseTree, EntryDetail, EntryInput, EntrySummary, HistoryItem,
+    self, AttachmentMeta, DatabaseTree, DbMetaSettings, EntryDetail, EntryInput, EntrySummary,
+    HistoryItem, MaintenanceReport,
 };
 use crate::error::{AppError, AppResult};
 use crate::fs_ops::{self, FileMeta};
 use crate::otp::{self, TotpCode};
 use crate::search::{self, SearchFilters, SearchHit};
 use crate::session::{OpenVault, VaultSession};
+use crate::settings::{self, AppSettings, SettingsState};
 use crate::tray::{self, TrayEntry};
 
 /// Hello-world sanity command (PLAN Phase 1).
@@ -637,4 +639,167 @@ pub async fn auto_type_entry(
     })
     .await
     .map_err(join_err)?
+}
+
+// ── Phase 7: settings & preferences ──────────────────────────────────────────
+
+/// Return the current application settings (PRD §3.9).
+#[tauri::command]
+pub fn get_settings(state: State<'_, SettingsState>) -> AppSettings {
+    settings::current(&state)
+}
+
+/// Persist application settings to disk and update the in-memory canonical copy.
+/// The window-close handler reads `minimize_to_tray` from this same state, so a
+/// save takes effect immediately.
+#[tauri::command]
+pub fn save_settings(
+    app: AppHandle,
+    state: State<'_, SettingsState>,
+    settings: AppSettings,
+) -> AppResult<()> {
+    settings::save(&app, &state, settings)
+}
+
+/// Whether VaultPeer is registered to launch when the user signs in (SET-05).
+#[tauri::command]
+pub fn get_autostart() -> bool {
+    crate::autostart::is_enabled()
+}
+
+/// Enable/disable launch-on-login. Windows-only; errors elsewhere so the UI can
+/// surface that it's unsupported.
+#[tauri::command]
+pub fn set_autostart(enabled: bool) -> AppResult<()> {
+    crate::autostart::set_enabled(enabled)
+}
+
+/// Calibrate Argon2 iterations for a target unlock time (PRD ENC-05: "Calculate
+/// for 1.0s"). Pure compute, run off the UI thread.
+#[tauri::command]
+pub async fn kdf_benchmark(
+    memory_mib: u64,
+    parallelism: u32,
+    target_secs: f64,
+    argon2id: bool,
+) -> AppResult<u64> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crypto::benchmark_kdf_iterations(memory_mib, parallelism, target_secs, argon2id)
+    })
+    .await
+    .map_err(join_err)?
+}
+
+/// The open database's encryption + recycle-bin/history settings, for the
+/// Database Settings tab.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbSettings {
+    /// Current KDF / cipher / compression configuration.
+    encryption: CreateOptions,
+    /// Recycle-bin and history-retention settings.
+    meta: DbMetaSettings,
+}
+
+/// Read the open database's encryption and recycle-bin/history settings.
+#[tauri::command]
+pub fn get_db_settings(session: State<'_, VaultSession>) -> AppResult<DbSettings> {
+    with_db(&session, |db| {
+        Ok(DbSettings {
+            encryption: crypto::current_create_options(db),
+            meta: database::read_db_meta_settings(db),
+        })
+    })
+}
+
+/// Apply new encryption and recycle-bin/history settings to the open database.
+/// Changes are in-memory; the frontend marks the session dirty and saves to
+/// re-encrypt the file with the new parameters.
+#[tauri::command]
+pub fn update_db_settings(
+    encryption: CreateOptions,
+    meta: DbMetaSettings,
+    session: State<'_, VaultSession>,
+) -> AppResult<()> {
+    with_db_mut(&session, |db| {
+        crypto::apply_create_options(db, &encryption);
+        database::apply_db_meta_settings(db, &meta)
+    })
+}
+
+/// Trim entry histories to the configured retention limits ("Database
+/// maintenance / cleanup").
+#[tauri::command]
+pub fn db_maintenance(session: State<'_, VaultSession>) -> AppResult<MaintenanceReport> {
+    with_db_mut(&session, database::maintenance_cleanup)
+}
+
+/// Produce an unencrypted export of the open database in `"csv"` or `"xml"`
+/// format (PRD UN-06). The frontend warns the user, then writes the returned
+/// text to a chosen file.
+#[tauri::command]
+pub fn export_database(format: String, session: State<'_, VaultSession>) -> AppResult<String> {
+    with_db(&session, |db| match format.to_lowercase().as_str() {
+        "xml" => Ok(crate::export::to_xml(db)),
+        "csv" => Ok(crate::export::to_csv(db)),
+        other => Err(AppError::InvalidOperation(format!(
+            "unsupported export format: {other}"
+        ))),
+    })
+}
+
+// ── Phase 7: Windows Hello biometric quick-unlock (UN-02/UN-03) ───────────────
+
+/// Whether Windows Hello (or its PIN fallback) is available on this machine.
+#[tauri::command]
+pub fn biometric_available() -> bool {
+    crate::biometric::available()
+}
+
+/// Whether a database already has a stored biometric quick-unlock credential.
+#[tauri::command]
+pub fn biometric_is_enrolled(app: AppHandle, path: String) -> bool {
+    crate::biometric::is_enrolled(&app, &path)
+}
+
+/// Enroll the open database for quick-unlock: prompt Windows Hello, then store
+/// the master password DPAPI-protected for this user. Runs off the UI thread
+/// because the Hello prompt blocks.
+#[tauri::command]
+pub async fn biometric_enroll(
+    app: AppHandle,
+    path: String,
+    password: String,
+) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || crate::biometric::enroll(&app, &path, &password))
+        .await
+        .map_err(join_err)?
+}
+
+/// Unlock a database via Windows Hello: prompt, decrypt the stored password, and
+/// load the database into the session (mirrors [`unlock_database`]).
+#[tauri::command]
+pub async fn biometric_unlock(
+    app: AppHandle,
+    path: String,
+    session: State<'_, VaultSession>,
+) -> AppResult<DatabaseMetadata> {
+    let unlock_path = path.clone();
+    let app_for_hello = app.clone();
+    let (db, key) = tauri::async_runtime::spawn_blocking(move || {
+        let password = crate::biometric::unlock(&app_for_hello, &unlock_path)?;
+        crypto::open_database(&unlock_path, Some(&password), None)
+    })
+    .await
+    .map_err(join_err)??;
+
+    let meta = crypto::metadata_from(&db, &path);
+    session.set(OpenVault { db, key, path });
+    Ok(meta)
+}
+
+/// Remove a database's stored quick-unlock credential.
+#[tauri::command]
+pub fn biometric_forget(app: AppHandle, path: String) -> AppResult<()> {
+    crate::biometric::forget(&app, &path)
 }

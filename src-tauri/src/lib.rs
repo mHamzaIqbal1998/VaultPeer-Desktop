@@ -3,21 +3,26 @@
 //! `run()` is the shared entrypoint invoked by `main.rs` (desktop) and is kept
 //! library-side so it can also back a future mobile target.
 
+mod autostart;
 mod autotype;
+mod biometric;
 mod clipboard;
 mod commands;
 mod crypto;
 mod database;
 mod error;
+mod export;
 mod fs_ops;
 mod otp;
 mod search;
 mod session;
+mod settings;
 mod tray;
 
 use tauri::{Manager, WindowEvent};
 
 use crate::session::VaultSession;
+use crate::settings::SettingsState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -75,8 +80,18 @@ pub fn run() {
         .manage(VaultSession::default())
         // Remembers the window focused at auto-type hotkey time (Phase 6).
         .manage(autotype::AutoTypeTarget::default())
+        // Application settings, loaded from disk during setup (Phase 7).
+        .manage(SettingsState::default())
         .setup(move |app| {
             tray::create_tray(app.handle())?;
+
+            // Load persisted settings into the managed state so the close
+            // handler and commands can read them without hitting disk (Phase 7).
+            let loaded = settings::load(app.handle());
+            *app.state::<SettingsState>()
+                .0
+                .lock()
+                .expect("settings mutex poisoned") = loaded;
             #[cfg(desktop)]
             {
                 use tauri_plugin_global_shortcut::GlobalShortcutExt;
@@ -95,13 +110,26 @@ pub fn run() {
             }
             Ok(())
         })
-        // Hide the window to the tray instead of quitting on the close button.
-        // The app is fully exited via the tray's "Quit" item.
+        // On the close button: hide to the tray when "minimize to tray" is on
+        // (the default — the app is then exited via the tray's "Quit" item), or
+        // let the window close (quitting the app) when the user has turned it
+        // off (PLAN Phase 7 / SET-04).
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
-                    let _ = window.hide();
-                    api.prevent_close();
+                    let minimize_to_tray = window
+                        .app_handle()
+                        .try_state::<SettingsState>()
+                        .map(|s| {
+                            s.0.lock()
+                                .map(|g| g.minimize_to_tray)
+                                .unwrap_or(true)
+                        })
+                        .unwrap_or(true);
+                    if minimize_to_tray {
+                        let _ = window.hide();
+                        api.prevent_close();
+                    }
                 }
             }
         })
@@ -145,6 +173,20 @@ pub fn run() {
             commands::auto_type_entry,
             commands::auto_type_to_window,
             commands::copy_clipboard,
+            commands::get_settings,
+            commands::save_settings,
+            commands::get_autostart,
+            commands::set_autostart,
+            commands::kdf_benchmark,
+            commands::get_db_settings,
+            commands::update_db_settings,
+            commands::db_maintenance,
+            commands::export_database,
+            commands::biometric_available,
+            commands::biometric_is_enrolled,
+            commands::biometric_enroll,
+            commands::biometric_unlock,
+            commands::biometric_forget,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VaultPeer");

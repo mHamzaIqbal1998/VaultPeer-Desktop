@@ -17,6 +17,7 @@ import {
 } from "@/lib/passwordGenerator";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useGeneratorStore } from "@/stores/generatorStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 interface Props {
   onClose: () => void;
@@ -37,8 +38,14 @@ const SEPARATORS: { value: string; label: string }[] = [
  * readout, copy-to-clipboard, and a session-only history of generated values.
  */
 export function PasswordGenerator({ onClose }: Props) {
+  // Seed character-set options from the user's saved generator defaults
+  // (PLAN Phase 7 / SET-09), falling back to the built-in defaults.
+  const defaults = useSettingsStore((s) => s.settings.generator);
   const [mode, setMode] = useState<Mode>("password");
-  const [pwOpts, setPwOpts] = useState<GeneratorOptions>(DEFAULT_GENERATOR_OPTIONS);
+  const [pwOpts, setPwOpts] = useState<GeneratorOptions>(() => ({
+    ...DEFAULT_GENERATOR_OPTIONS,
+    ...defaults,
+  }));
   const [ppOpts, setPpOpts] = useState<PassphraseOptions>(DEFAULT_PASSPHRASE_OPTIONS);
   const [value, setValue] = useState("");
   const [copied, setCopied] = useState(false);

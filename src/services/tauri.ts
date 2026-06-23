@@ -154,6 +154,21 @@ export async function saveAttachmentDialog(
   return path ?? null;
 }
 
+/**
+ * Open a native save dialog for an emergency export, filtered to the format.
+ * Returns the chosen absolute path, or null if cancelled (PLAN Phase 7).
+ */
+export async function saveExportDialog(
+  format: "csv" | "xml",
+): Promise<string | null> {
+  const path = await save({
+    title: "Emergency Export (unencrypted)",
+    defaultPath: `vaultpeer-export.${format}`,
+    filters: [{ name: format.toUpperCase(), extensions: [format] }],
+  });
+  return path ?? null;
+}
+
 // ── Phase 2: database cryptography & unlock ─────────────────────────────────
 
 /** Decrypt an existing database and load it into the vault session. */
@@ -629,6 +644,163 @@ export async function autoTypeToWindow(
   selective: boolean,
 ): Promise<void> {
   await invoke("auto_type_to_window", { entryUuid, selective });
+}
+
+// ── Phase 7: settings & preferences ──────────────────────────────────────────
+
+/** Default password-generator preferences (mirrors Rust `GeneratorDefaults`). */
+export interface GeneratorDefaults {
+  length: number;
+  uppercase: boolean;
+  lowercase: boolean;
+  digits: boolean;
+  symbols: boolean;
+  excludeAmbiguous: boolean;
+}
+
+/** Customizable in-app keyboard shortcuts (mirrors Rust `ShortcutBindings`). */
+export interface ShortcutBindings {
+  search: string;
+  lock: string;
+  save: string;
+  newEntry: string;
+  generator: string;
+  settings: string;
+  copyPassword: string;
+  copyUsername: string;
+}
+
+/** All persisted application settings (mirrors Rust `AppSettings`). */
+export interface AppSettings {
+  version: number;
+  theme: "dark" | "light" | "system";
+  /** Inactivity seconds before auto-lock; 0 disables. */
+  autoLockSeconds: number;
+  /** Seconds before a copied secret is cleared; 0 disables. */
+  clipboardClearSeconds: number;
+  minimizeToTray: boolean;
+  startWithWindows: boolean;
+  generator: GeneratorDefaults;
+  defaultCreateOptions: CreateOptions;
+  shortcuts: ShortcutBindings;
+}
+
+/** Recycle-bin / history-retention settings of the open DB (Rust `DbMetaSettings`). */
+export interface DbMetaSettings {
+  recycleBinEnabled: boolean;
+  /** Max history snapshots per entry; -1 = unlimited. */
+  historyMaxItems: number;
+  /** Max total history size per entry in MiB; -1 = unlimited. */
+  historyMaxSizeMib: number;
+}
+
+/** The open database's encryption + retention settings (Rust `DbSettings`). */
+export interface DbSettings {
+  encryption: CreateOptions;
+  meta: DbMetaSettings;
+}
+
+/** Result of a maintenance cleanup pass (mirrors Rust `MaintenanceReport`). */
+export interface MaintenanceReport {
+  historySnapshotsRemoved: number;
+  entriesTrimmed: number;
+}
+
+/** Read the persisted application settings. */
+export async function getSettings(): Promise<AppSettings> {
+  return invoke<AppSettings>("get_settings");
+}
+
+/** Persist application settings (also updates the live in-memory copy). */
+export async function saveSettings(settings: AppSettings): Promise<void> {
+  await invoke("save_settings", { settings });
+}
+
+/** Whether launch-on-login is currently registered. */
+export async function getAutostart(): Promise<boolean> {
+  return invoke<boolean>("get_autostart");
+}
+
+/** Enable/disable launch-on-login (Windows-only; rejects elsewhere). */
+export async function setAutostart(enabled: boolean): Promise<void> {
+  await invoke("set_autostart", { enabled });
+}
+
+/**
+ * Calibrate Argon2 iterations to hit a target unlock time (PRD ENC-05). Returns
+ * the recommended iteration count for the given memory/parallelism.
+ */
+export async function kdfBenchmark(
+  memoryMib: number,
+  parallelism: number,
+  targetSecs: number,
+  argon2id: boolean,
+): Promise<number> {
+  return invoke<number>("kdf_benchmark", {
+    memoryMib,
+    parallelism,
+    targetSecs,
+    argon2id,
+  });
+}
+
+/** Read the open database's encryption + recycle-bin/history settings. */
+export async function getDbSettings(): Promise<DbSettings> {
+  return invoke<DbSettings>("get_db_settings");
+}
+
+/** Apply new encryption + recycle-bin/history settings to the open database. */
+export async function updateDbSettings(
+  encryption: CreateOptions,
+  meta: DbMetaSettings,
+): Promise<void> {
+  await invoke("update_db_settings", { encryption, meta });
+}
+
+/** Trim entry histories to the configured retention limits. */
+export async function dbMaintenance(): Promise<MaintenanceReport> {
+  return invoke<MaintenanceReport>("db_maintenance");
+}
+
+/** Produce an unencrypted CSV/XML export of the open database (PRD UN-06). */
+export async function exportDatabase(format: "csv" | "xml"): Promise<string> {
+  return invoke<string>("export_database", { format });
+}
+
+// ── Phase 7: Windows Hello biometric quick-unlock (UN-02/UN-03) ───────────────
+
+/** Whether Windows Hello (or its PIN fallback) is available on this machine. */
+export async function biometricAvailable(): Promise<boolean> {
+  return invoke<boolean>("biometric_available");
+}
+
+/** Whether a database already has a stored biometric quick-unlock credential. */
+export async function biometricIsEnrolled(path: string): Promise<boolean> {
+  return invoke<boolean>("biometric_is_enrolled", { path });
+}
+
+/**
+ * Enroll a database for biometric quick-unlock: prompts Windows Hello, then
+ * stores the master password DPAPI-protected. Windows-only.
+ */
+export async function biometricEnroll(
+  path: string,
+  password: string,
+): Promise<void> {
+  await invoke("biometric_enroll", { path, password });
+}
+
+/**
+ * Unlock a database via Windows Hello and load it into the session. Returns the
+ * database metadata, like {@link unlockDatabase}.
+ */
+export async function biometricUnlock(path: string): Promise<DatabaseMetadata> {
+  return invoke<DatabaseMetadata>("biometric_unlock", { path });
+}
+
+/** Remove a database's stored quick-unlock credential. */
+export async function biometricForget(path: string): Promise<void> {
+  await invoke("biometric_forget", { path });
 }
 
 /** Read raw bytes from a file. */

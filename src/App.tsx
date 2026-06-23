@@ -6,7 +6,10 @@ import { UnlockScreen } from "@/components/UnlockScreen";
 import { MainLayout } from "@/components/MainLayout";
 import { PasswordGenerator } from "@/components/PasswordGenerator";
 import { SearchModal } from "@/components/SearchModal";
+import { SettingsPanel } from "@/components/SettingsPanel";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { matchesAccelerator } from "@/lib/shortcuts";
 import {
   autoTypeToWindow,
   getEntry,
@@ -46,14 +49,24 @@ export default function App() {
   const dirty = useSessionStore((s) => s.dirty);
   const isUnlocked = metadata !== null;
 
+  const loadSettings = useSettingsStore((s) => s.load);
+  const shortcuts = useSettingsStore((s) => s.settings.shortcuts);
+  const autoLockSeconds = useSettingsStore((s) => s.settings.autoLockSeconds);
+
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [autoTypePick, setAutoTypePick] = useState<AutoTypePick>({
     open: false,
     windowTitle: "",
     selective: false,
   });
   const [toast, setToast] = useState<{ kind: AutoTypeStatus["kind"]; message: string } | null>(null);
+
+  // Load persisted settings once at startup (PLAN Phase 7).
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
 
   // Lock from the system tray: drop backend state, then clear the UI session.
   useEffect(() => {
@@ -128,16 +141,24 @@ export default function App() {
     };
   }, [isUnlocked, dirty]);
 
-  // Keyboard shortcuts: Ctrl+L lock, Ctrl+S save (PRD §5.3).
+  // Keyboard shortcuts (PRD §5.3), using the user's customizable bindings
+  // (PLAN Phase 7 / SET-11): lock, save, generator, search, settings.
   useEffect(() => {
-    if (!isUnlocked) return;
     const handler = async (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      if (e.key === "l" || e.key === "L") {
+      if (matchesAccelerator(e, shortcuts.settings)) {
+        e.preventDefault();
+        setSettingsOpen(true);
+      } else if (matchesAccelerator(e, shortcuts.generator)) {
+        e.preventDefault();
+        setGeneratorOpen(true);
+      } else if (isUnlocked && matchesAccelerator(e, shortcuts.search)) {
+        e.preventDefault();
+        setSearchOpen(true);
+      } else if (isUnlocked && matchesAccelerator(e, shortcuts.lock)) {
         e.preventDefault();
         await lockDatabase().catch(() => {});
         setLocked();
-      } else if (e.key === "s" || e.key === "S") {
+      } else if (isUnlocked && matchesAccelerator(e, shortcuts.save)) {
         e.preventDefault();
         try {
           await saveDatabase();
@@ -149,34 +170,42 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [isUnlocked, setLocked, setDirty]);
+  }, [isUnlocked, setLocked, setDirty, shortcuts]);
 
-  // Ctrl+G: password generator. Ctrl+K: global search (PRD §5.3 / SRC-05).
+  // Auto-lock after inactivity (PLAN Phase 7 / UN-04). Any user input resets a
+  // timer; when it elapses we lock the vault and clear the UI session. Disabled
+  // when locked or when the timeout is set to "Never" (0).
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      if (e.key === "g" || e.key === "G") {
-        e.preventDefault();
-        setGeneratorOpen(true);
-      } else if (e.key === "k" || e.key === "K") {
-        e.preventDefault();
-        if (isUnlocked) setSearchOpen(true);
-      }
+    if (!isUnlocked || autoLockSeconds <= 0) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        await lockDatabase().catch(() => {});
+        setLocked();
+      }, autoLockSeconds * 1000);
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isUnlocked]);
+    const events = ["mousemove", "mousedown", "keydown", "wheel", "touchstart"];
+    events.forEach((evt) => window.addEventListener(evt, reset, { passive: true }));
+    reset();
+    return () => {
+      clearTimeout(timer);
+      events.forEach((evt) => window.removeEventListener(evt, reset));
+    };
+  }, [isUnlocked, autoLockSeconds, setLocked]);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background-primary text-text-primary">
       <TitleBar
         onOpenGenerator={() => setGeneratorOpen(true)}
         onOpenSearch={isUnlocked ? () => setSearchOpen(true) : undefined}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
       <main className="flex-1 overflow-hidden">
         {isUnlocked ? <MainLayout /> : <UnlockScreen />}
       </main>
       {generatorOpen && <PasswordGenerator onClose={() => setGeneratorOpen(false)} />}
+      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
       {searchOpen && isUnlocked && (
         <SearchModal onClose={() => setSearchOpen(false)} />
       )}

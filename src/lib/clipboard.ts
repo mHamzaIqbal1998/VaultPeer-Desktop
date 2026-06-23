@@ -1,5 +1,6 @@
 import { copyClipboardProtected } from "@/services/tauri";
 import { useClipboardStore } from "@/stores/clipboardStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 /**
  * Secure clipboard helper (PLAN Phase 6 / CLP-01, CLP-02).
@@ -67,7 +68,11 @@ export async function copyToClipboard(
 
   cancelPendingClear();
 
-  const seconds = opts.clearAfterSeconds ?? DEFAULT_CLIPBOARD_CLEAR_SECONDS;
+  // Default to the user's configured clear timeout (PLAN Phase 7 / CLP-02),
+  // falling back to the built-in default if settings haven't loaded yet.
+  const configured = useSettingsStore.getState().settings.clipboardClearSeconds;
+  const seconds =
+    opts.clearAfterSeconds ?? configured ?? DEFAULT_CLIPBOARD_CLEAR_SECONDS;
   const store = useClipboardStore.getState();
 
   if (seconds && seconds > 0) {
