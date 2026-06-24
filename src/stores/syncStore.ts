@@ -31,6 +31,15 @@ interface SyncState {
   createRoom: () => void;
   joinRoom: (room: string, signalingUrl?: string) => void;
   leave: () => void;
+  /** Push the current (saved) vault to the connected peer, if any. */
+  pushNow: () => void;
+  /** Tear down the active session (e.g. on lock) without forgetting the room. */
+  stop: () => void;
+  /**
+   * Auto-rejoin the remembered room when a vault is opened (if auto-sync is on).
+   * No-op if already connected or nothing is remembered.
+   */
+  autoStart: () => void;
 }
 
 let activeSession: SyncSession | null = null;
@@ -41,6 +50,13 @@ const EMPTY_PROGRESS: SyncProgress = { sent: 0, sentTotal: 0, received: 0, recei
 function basename(path: string): string {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] || path;
+}
+
+/** Remember (or forget) the room for auto-reconnect, persisted via settings. */
+function rememberRoom(room: string | null, autoSync: boolean) {
+  const st = useSettingsStore.getState();
+  const sync = st.settings.sync;
+  void st.update({ sync: { ...sync, room: room ?? sync.room, autoSync } });
 }
 
 export const useSyncStore = create<SyncState>((set, get) => {
@@ -110,6 +126,8 @@ export const useSyncStore = create<SyncState>((set, get) => {
     );
     activeSession = session;
     session.start();
+    // Remember this room so the vault auto-reconnects on next open.
+    rememberRoom(room, true);
   };
 
   return {
@@ -128,9 +146,33 @@ export const useSyncStore = create<SyncState>((set, get) => {
       if (mode === "offline") get().leave();
       set({ mode });
     },
-    createRoom: () => startSession(generateRoomId(), true),
-    joinRoom: (room, signalingUrl) => startSession(room.trim(), false, signalingUrl),
+    createRoom: () => {
+      set({ mode: "network" });
+      startSession(generateRoomId(), true);
+    },
+    joinRoom: (room, signalingUrl) => {
+      set({ mode: "network" });
+      startSession(room.trim(), false, signalingUrl);
+    },
     leave: () => {
+      activeSession?.close();
+      activeSession = null;
+      // Stop auto-reconnecting; keep the room value so the user can rejoin it.
+      rememberRoom(null, false);
+      set({
+        status: "idle",
+        room: null,
+        isHost: false,
+        peerCount: 0,
+        progress: { ...EMPTY_PROGRESS },
+        lastResult: null,
+        error: null,
+      });
+    },
+    pushNow: () => {
+      void activeSession?.pushUpdate();
+    },
+    stop: () => {
       activeSession?.close();
       activeSession = null;
       set({
@@ -142,6 +184,16 @@ export const useSyncStore = create<SyncState>((set, get) => {
         lastResult: null,
         error: null,
       });
+    },
+    autoStart: () => {
+      // Only when nothing is running and a vault is open.
+      if (get().status !== "idle" || activeSession) return;
+      if (!useSessionStore.getState().metadata) return;
+      const sync = useSettingsStore.getState().settings.sync;
+      if (sync.autoSync && sync.room && sync.signalingUrl) {
+        set({ mode: "network" });
+        startSession(sync.room, false);
+      }
     },
   };
 });

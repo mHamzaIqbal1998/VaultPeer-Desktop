@@ -385,7 +385,8 @@ A refined adaptation of the mobile Cyber-Sage aesthetic optimized for desktop in
   - [x] Room management (create, join, leave) (`SyncPanel`; join accepts a room code or a scanned/pasted invite link)
   - [x] Connected peers list with status (peer-connected/waiting indicator + live status chip; two-party rooms)
   - [x] QR code scanner for joining (reuses the existing `QrScanner`/jsQR component; `parseSyncInvite` decodes the invite)
-  - [x] Sync status indicator in title bar (`SyncStatus` — colored status dot over the sync icon, opens the panel)
+  - [x] Sync status indicator in title bar (`SyncStatus` — colored status dot + spinning icon + live transfer **percentage** over the sync icon, opens the panel)
+  - [x] Remembered room + auto-sync (the joined/created room persists in `AppSettings.sync.room`/`autoSync`; opening a vault auto-rejoins it via `syncStore.autoStart`, and saving the vault auto-pushes to the connected peer via `syncStore.pushNow` → `SyncSession.pushUpdate`, mirroring the mobile node's push-on-change)
 - [x] Implement ICE server configuration:
   - [x] Default STUN servers (`SyncConfig::default` seeds `stun:stun.l.google.com:19302`; mirrored in the frontend defaults)
   - [x] Custom TURN server support (Settings → Sync: add/remove servers with optional TURN username/credential)

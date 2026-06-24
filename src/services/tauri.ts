@@ -683,6 +683,10 @@ export interface SyncConfig {
   signalingUrl: string;
   /** ICE servers for NAT traversal (STUN for discovery, TURN as relay). */
   iceServers: IceServerConfig[];
+  /** Last room joined/created, remembered for auto-reconnect on vault open. */
+  room: string;
+  /** When true, opening a vault auto-rejoins `room` and keeps it in sync. */
+  autoSync: boolean;
 }
 
 /** All persisted application settings (mirrors Rust `AppSettings`). */

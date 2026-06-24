@@ -10,6 +10,7 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { SyncPanel } from "@/components/SyncPanel";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useSyncStore } from "@/stores/syncStore";
 import { matchesAccelerator } from "@/lib/shortcuts";
 import {
   autoTypeToWindow,
@@ -51,8 +52,12 @@ export default function App() {
   const isUnlocked = metadata !== null;
 
   const loadSettings = useSettingsStore((s) => s.load);
+  const settingsLoading = useSettingsStore((s) => s.loading);
   const shortcuts = useSettingsStore((s) => s.settings.shortcuts);
   const autoLockSeconds = useSettingsStore((s) => s.settings.autoLockSeconds);
+  const syncAutoStart = useSyncStore((s) => s.autoStart);
+  const syncStop = useSyncStore((s) => s.stop);
+  const pushNow = useSyncStore((s) => s.pushNow);
 
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -143,6 +148,18 @@ export default function App() {
     };
   }, [isUnlocked, dirty]);
 
+  // Auto-sync (PLAN Phase 8): once settings are loaded, opening a vault
+  // auto-rejoins the remembered room and keeps it in sync; locking tears the
+  // session down (without forgetting the room).
+  useEffect(() => {
+    if (settingsLoading) return;
+    if (isUnlocked) {
+      syncAutoStart();
+    } else {
+      syncStop();
+    }
+  }, [isUnlocked, settingsLoading, syncAutoStart, syncStop]);
+
   // Keyboard shortcuts (PRD §5.3), using the user's customizable bindings
   // (PLAN Phase 7 / SET-11): lock, save, generator, search, settings.
   useEffect(() => {
@@ -165,6 +182,8 @@ export default function App() {
         try {
           await saveDatabase();
           setDirty(false);
+          // Push the saved changes to any connected peer (PLAN Phase 8).
+          pushNow();
         } catch {
           /* surfaced via the Save button in VaultView */
         }
@@ -172,7 +191,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [isUnlocked, setLocked, setDirty, shortcuts]);
+  }, [isUnlocked, setLocked, setDirty, shortcuts, pushNow]);
 
   // Auto-lock after inactivity (PLAN Phase 7 / UN-04). Any user input resets a
   // timer; when it elapses we lock the vault and clear the UI session. Disabled

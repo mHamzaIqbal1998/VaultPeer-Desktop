@@ -891,6 +891,24 @@ function SyncTab() {
 
   return (
     <div className="space-y-6">
+      <Section title="Auto-sync">
+        <ToggleRow
+          label="Sync automatically on open"
+          hint={
+            sync.room
+              ? `Reconnects to room ${sync.room} when a vault is opened.`
+              : "Create or join a room from the Sync panel to enable this."
+          }
+          checked={sync.autoSync}
+          onChange={(autoSync) => void update({ sync: { ...sync, autoSync } })}
+        />
+        {sync.room && (
+          <div className="text-xs text-text-muted">
+            Remembered room: <code className="font-mono text-text-secondary">{sync.room}</code>
+          </div>
+        )}
+      </Section>
+
       <Section title="Signaling server">
         <p className="text-xs text-text-muted">
           P2P sync exchanges connection details through a WebSocket signaling

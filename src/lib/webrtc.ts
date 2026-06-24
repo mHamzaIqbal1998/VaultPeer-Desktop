@@ -450,6 +450,35 @@ export class SyncSession {
     if (this.dc?.readyState === "open") this.dc.send(JSON.stringify(msg));
   }
 
+  /** True once a peer data channel is open (ready to push live updates). */
+  isLive(): boolean {
+    return !this.closed && this.dc?.readyState === "open";
+  }
+
+  /**
+   * Proactively push the current local vault to the connected peer (called
+   * after a save). No-op if no peer link is open. Mirrors the mobile node's
+   * push-on-local-change behaviour.
+   */
+  async pushUpdate(): Promise<void> {
+    if (!this.isLive()) return;
+    try {
+      const local = await this.opts.loadLocal();
+      this.local = local;
+      this.setStatus("syncing");
+      this.handlers.onLog("Pushing local changes to peer…");
+      await this.sendChunked("push_request", {
+        filename: this.opts.filename,
+        fileData: bytesToBase64(local.bytes),
+        lastModified: local.lastModified,
+      });
+      this.handlers.onLog("Local changes pushed.");
+      if (!this.closed) this.setStatus("done");
+    } catch (e) {
+      this.handlers.onLog(`Push failed: ${String(e)}`);
+    }
+  }
+
   /** Kick off the symmetric metadata exchange once the channel is open. */
   private async beginSync(): Promise<void> {
     try {

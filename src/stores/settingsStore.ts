@@ -42,6 +42,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   sync: {
     signalingUrl: "",
     iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+    room: "",
+    autoSync: false,
   },
 };
 

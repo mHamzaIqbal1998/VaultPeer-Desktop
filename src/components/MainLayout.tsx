@@ -3,6 +3,7 @@ import { getEntry, saveDatabase, type EntryDetail as EntryDetailData } from "@/s
 import { useSessionStore } from "@/stores/sessionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useDatabaseStore } from "@/stores/databaseStore";
+import { useSyncStore } from "@/stores/syncStore";
 import { copyToClipboard } from "@/lib/clipboard";
 import { matchesAccelerator } from "@/lib/shortcuts";
 import { GroupTree } from "./GroupTree";
@@ -96,6 +97,8 @@ export function MainLayout() {
     try {
       await saveDatabase();
       setDirty(false);
+      // Push the saved changes to any connected sync peer (PLAN Phase 8).
+      useSyncStore.getState().pushNow();
       setSavedFlash(true);
       window.setTimeout(() => setSavedFlash(false), 1500);
     } catch {

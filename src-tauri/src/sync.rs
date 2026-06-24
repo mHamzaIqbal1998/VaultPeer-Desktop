@@ -51,6 +51,11 @@ pub struct SyncConfig {
     pub signaling_url: String,
     /// ICE servers for NAT traversal (STUN for discovery, TURN as relay).
     pub ice_servers: Vec<IceServerConfig>,
+    /// The last room the user joined/created, remembered across restarts so the
+    /// vault can auto-reconnect on open (mirrors the mobile node's `vaultId`).
+    pub room: String,
+    /// When true, opening a vault auto-rejoins [`room`] and keeps it synced.
+    pub auto_sync: bool,
 }
 
 impl Default for SyncConfig {
@@ -62,6 +67,8 @@ impl Default for SyncConfig {
                 username: None,
                 credential: None,
             }],
+            room: String::new(),
+            auto_sync: false,
         }
     }
 }
