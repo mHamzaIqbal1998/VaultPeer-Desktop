@@ -21,7 +21,7 @@ export function WindowControls() {
   }, []);
 
   return (
-    <div className="flex h-full items-stretch" data-tauri-drag-region={false}>
+    <div className="flex items-stretch self-stretch" data-tauri-drag-region={false}>
       <ControlButton label="Minimize" onClick={() => minimizeWindow()}>
         <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
           <rect x="0" y="4.5" width="10" height="1" fill="currentColor" />
@@ -71,7 +71,9 @@ function ControlButton({
       title={label}
       onClick={onClick}
       className={[
-        "flex w-12 items-center justify-center text-text-muted transition-colors",
+        // Full title-bar height + native-style width so the hover area fills the
+        // whole button, flush to the top-right corner.
+        "flex h-10 w-[46px] items-center justify-center text-text-muted transition-colors",
         danger
           ? "hover:bg-status-error hover:text-white"
           : "hover:bg-accent-mint-dim hover:text-text-primary",
