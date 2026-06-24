@@ -130,7 +130,6 @@ export const useSyncStore = create<SyncState>((set, get) => {
         lastModified = fileMtime;
       }
       await syncSetMtime(filename, lastModified).catch(() => {});
-      pushLog(`Advertise version=${lastModified} (file=${fileMtime}, known=${known}, dirty=${wasDirty})`);
       return { bytes, lastModified };
     };
 
@@ -160,7 +159,6 @@ export const useSyncStore = create<SyncState>((set, get) => {
       // Persist the converged version (authoritative) and align the file mtime.
       await syncSetMtime(filename, lastModified).catch(() => {});
       await setFileMtime(metadata.path, lastModified).catch(() => {});
-      pushLog(`Adopt version=${lastModified} (remote=${remoteMtime}, changed=${result.changed})`);
       return { changed: result.changed, lastModified, result };
     };
 

@@ -120,6 +120,8 @@ interface Peer {
   metaComplete: boolean;
   /** A pull we requested from this peer is in flight. */
   pullInFlight: boolean;
+  /** We are currently sending a file (pull_response / push) to this peer. */
+  sending: boolean;
   /** We applied (merged) something from this peer this session. */
   didApply: boolean;
   incoming: IncomingTransfer | null;
@@ -278,9 +280,10 @@ export class SyncSession {
     if (this.closed) return;
     let stalled = false;
     for (const p of this.peers.values()) {
-      if (p.incoming || p.pullInFlight) {
+      if (p.incoming || p.pullInFlight || p.sending) {
         p.incoming = null;
         p.pullInFlight = false;
+        p.sending = false;
         stalled = true;
       }
     }
@@ -402,6 +405,7 @@ export class SyncSession {
       dc: null,
       metaComplete: false,
       pullInFlight: false,
+      sending: false,
       didApply: false,
       incoming: null,
       progress: { sent: 0, sentTotal: 0, received: 0, receivedTotal: 0 },
@@ -582,6 +586,7 @@ export class SyncSession {
         };
         peer.progress = { sent: 0, sentTotal: 0, received: 0, receivedTotal: msg.totalChunks ?? 0 };
         this.emitProgress(peer);
+        this.recomputeStatus(); // reflect the incoming transfer in the status bar
         this.handlers.onLog(`Receiving ${msg.msgType} from ${peer.id} (${msg.totalChunks} chunks)…`);
         return;
       case "file_chunk": {
@@ -667,9 +672,6 @@ export class SyncSession {
     await this.ensureLocal().catch(() => {});
     const remote = Number(msg.lastModified ?? 0);
     const localMtime = this.local?.lastModified ?? 0;
-    this.handlers.onLog(
-      `Compare ${peer.id}: peer=${remote} local=${localMtime} Δ=${remote - localMtime}`,
-    );
     if (remote - localMtime > MTIME_EPSILON) {
       this.handlers.onLog(`Peer ${peer.id} has a newer vault — pulling.`);
       peer.pullInFlight = true;
@@ -766,23 +768,30 @@ export class SyncSession {
       sha256,
     });
 
+    peer.sending = true;
     peer.progress = { sent: 0, sentTotal: totalChunks, received: 0, receivedTotal: 0 };
     this.emitProgress(peer);
+    this.recomputeStatus(); // reflect the outgoing transfer in the status bar
 
-    for (let i = 0; i < totalChunks; i++) {
-      if (this.closed || peer.dc?.readyState !== "open") return;
-      await this.waitForDrain(peer);
-      this.dcSend(peer, {
-        type: "file_chunk",
-        transferId,
-        chunkIndex: i,
-        chunkData: fileData.slice(i * CHUNK_CHARS, (i + 1) * CHUNK_CHARS),
-      });
-      peer.progress.sent = i + 1;
-      this.emitProgress(peer);
-      if (i > 0 && i % 20 === 0) await new Promise((r) => setTimeout(r, 1));
+    try {
+      for (let i = 0; i < totalChunks; i++) {
+        if (this.closed || peer.dc?.readyState !== "open") return;
+        await this.waitForDrain(peer);
+        this.dcSend(peer, {
+          type: "file_chunk",
+          transferId,
+          chunkIndex: i,
+          chunkData: fileData.slice(i * CHUNK_CHARS, (i + 1) * CHUNK_CHARS),
+        });
+        peer.progress.sent = i + 1;
+        this.emitProgress(peer);
+        if (i > 0 && i % 20 === 0) await new Promise((r) => setTimeout(r, 1));
+      }
+      this.dcSend(peer, { type: "file_chunk_end", transferId });
+    } finally {
+      peer.sending = false;
+      this.recomputeStatus();
     }
-    this.dcSend(peer, { type: "file_chunk_end", transferId });
   }
 
   private async waitForDrain(peer: Peer): Promise<void> {
@@ -818,11 +827,12 @@ export class SyncSession {
       this.setStatus(peers.length > 0 ? "negotiating" : "waiting");
       return;
     }
-    // A peer is "busy" only while actively transferring — receiving a file
-    // (`incoming`) or awaiting a pull we requested. We deliberately don't gate
-    // on `metaComplete`: a connected, idle peer is considered in-sync ("done"),
-    // so a missed `metadata_complete` can't pin the status on "Syncing…".
-    const busy = open.some((p) => p.pullInFlight || p.incoming);
+    // A peer is "busy" only while actively transferring — sending a file,
+    // receiving one (`incoming`), or awaiting a pull we requested. We
+    // deliberately don't gate on `metaComplete`: a connected, idle peer is
+    // considered in-sync ("done"), so a missed `metadata_complete` can't pin the
+    // status on "Syncing…".
+    const busy = open.some((p) => p.pullInFlight || p.incoming || p.sending);
     this.setStatus(busy ? "syncing" : "done");
   }
 
