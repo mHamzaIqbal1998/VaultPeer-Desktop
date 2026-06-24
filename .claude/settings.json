@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(node -e ' *)",
-      "Bash(cd /home/hamza/Projects/VaultPeerMobile && echo \"=== getEffectiveMtime / recordRemoteApply / advertise ===\"; grep -rnE \"getEffectiveMtime|recordRemoteApply|function advertise|lastModified|effectiveMtime|getMtime|mtimeStore|recordedMtime|appliedMtime\" src/services/sync/*.ts 2>/dev/null | grep -viE \"__tests__\" | head -40)",
-      "Read(//home/hamza/Projects/VaultPeerMobile/**)"
-    ]
-  }
-}
