@@ -9,7 +9,7 @@
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -45,6 +45,19 @@ pub fn stat_file(path: &Path) -> AppResult<FileMeta> {
         size: meta.len(),
         modified,
     })
+}
+
+/// Set a file's last-modified time to `mtime_ms` (Unix epoch milliseconds).
+///
+/// Used by P2P sync to stamp the local vault with the *logical* version
+/// timestamp agreed with a peer (mirroring the server node's `fs.utimes`), so a
+/// vault that's already in sync isn't perpetually re-pulled because its local
+/// filesystem mtime lags the peer's content mtime.
+pub fn set_file_mtime(path: &Path, mtime_ms: u64) -> AppResult<()> {
+    let time = UNIX_EPOCH + Duration::from_millis(mtime_ms);
+    let file = fs::OpenOptions::new().write(true).open(path)?;
+    file.set_modified(time)?;
+    Ok(())
 }
 
 /// Build the path of the temporary file used during an atomic write.
@@ -198,6 +211,26 @@ mod tests {
         assert_eq!(meta.size, 4096);
         assert!(meta.modified.is_some());
         assert!(meta.path.ends_with("vault.kdbx"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn set_mtime_is_reflected_by_stat() {
+        let dir = scratch_dir("mtime");
+        let path = dir.join("vault.kdbx");
+        write_file_atomic(&path, b"data").unwrap();
+
+        // A fixed whole-second timestamp (epoch ms) so the FS preserves it.
+        let target_ms: u64 = 1_700_000_000_000;
+        set_file_mtime(&path, target_ms).unwrap();
+
+        let meta = stat_file(&path).unwrap();
+        let got = meta.modified.unwrap();
+        // Allow a small tolerance for filesystem timestamp granularity.
+        assert!(
+            got.abs_diff(target_ms) < 2000,
+            "expected ~{target_ms}, got {got}"
+        );
         fs::remove_dir_all(&dir).ok();
     }
 

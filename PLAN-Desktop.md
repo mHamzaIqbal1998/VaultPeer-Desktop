@@ -383,7 +383,7 @@ A refined adaptation of the mobile Cyber-Sage aesthetic optimized for desktop in
   - [x] Sync mode selection (Offline/Network) (`SyncPanel` segmented toggle; Offline tears down any session)
   - [x] Server URL configuration (Settings → Sync tab, persisted in `AppSettings.sync.signalingUrl`)
   - [x] Room management (create, join, leave) (`SyncPanel`; join accepts a room code or a scanned/pasted invite link)
-  - [x] Connected peers list with status (peer-connected/waiting indicator + live status chip; two-party rooms)
+  - [x] Connected peers list with status (full **mesh** — one `RTCPeerConnection`/data channel per peer in a `Map`, so the desktop syncs with the node and mobile simultaneously; per-peer departures are detected via `connectionstatechange`, and the count reflects all open peers)
   - [x] QR code scanner for joining (reuses the existing `QrScanner`/jsQR component; `parseSyncInvite` decodes the invite)
   - [x] Sync status indicator in title bar (`SyncStatus` — colored status dot + spinning icon + live transfer **percentage** over the sync icon, opens the panel)
   - [x] Remembered room + auto-sync (the joined/created room persists in `AppSettings.sync.room`/`autoSync`; opening a vault auto-rejoins it via `syncStore.autoStart`, and saving the vault auto-pushes to the connected peer via `syncStore.pushNow` → `SyncSession.pushUpdate`, mirroring the mobile node's push-on-change)
@@ -409,7 +409,18 @@ A refined adaptation of the mobile Cyber-Sage aesthetic optimized for desktop in
 > better than pure file-LWW, and still protocol-compatible — then persisted.
 > The merge tolerates same-modification-time divergences (which abort the raw
 > keepass merge): such ties are broken in favour of the **incoming** copy by
-> nudging its timestamp, then retried, so a push always applies cleanly.
+> nudging its timestamp, then retried, so a push always applies cleanly. After
+> applying a peer's vault the desktop **adopts the peer's content-version
+> timestamp** so a vault that's already in sync isn't re-pulled on every
+> reconnect. The converged version per vault is persisted by the Rust backend
+> (`sync_get_mtime`/`sync_set_mtime` → `sync_mtimes.json`, mirroring the mobile
+> app's SecureStore clock — WebView `localStorage` proved unreliable across
+> restarts), and the file's own mtime is aligned via `set_file_mtime`
+> (mirroring the node's `fs.utimes`). The advertised version is
+> `max(filesystem mtime, remembered version)`. The local version is loaded via a
+> de-duped `ensureLocal()` that every `metadata_info` comparison awaits, so a
+> peer's metadata can't race `loadLocal()` and be compared against 0 (which
+> otherwise caused a spurious pull on every connect).
 > The signaling WebSocket runs **natively in Rust** via
 > `tauri-plugin-websocket` (driven from `lib/webrtc.ts` through its JS API),
 > because the WebView2 socket can hang in CONNECTING or be blocked by the app

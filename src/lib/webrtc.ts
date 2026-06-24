@@ -73,9 +73,14 @@ export interface SyncSessionOptions {
   filename: string;
   /** Read the current local vault: encrypted bytes + on-disk mtime (epoch ms). */
   loadLocal: () => Promise<{ bytes: Uint8Array; lastModified: number }>;
-  /** Merge received vault bytes into the local vault and persist. */
+  /**
+   * Merge received vault bytes into the local vault and persist. `remoteMtime`
+   * is the peer's advertised content-version timestamp, adopted locally so an
+   * already-in-sync vault isn't re-pulled on every reconnect.
+   */
   applyRemote: (
     bytes: Uint8Array,
+    remoteMtime: number,
   ) => Promise<{ changed: boolean; lastModified: number; result: MergeResult }>;
 }
 
@@ -106,29 +111,40 @@ interface IncomingTransfer {
   received: number;
 }
 
+/** One remote peer in the mesh, with its own connection + per-peer sync state. */
+interface Peer {
+  id: string;
+  pc: RTCPeerConnection;
+  dc: RTCDataChannel | null;
+  /** Peer finished advertising its metadata. */
+  metaComplete: boolean;
+  /** A pull we requested from this peer is in flight. */
+  pullInFlight: boolean;
+  /** We applied (merged) something from this peer this session. */
+  didApply: boolean;
+  incoming: IncomingTransfer | null;
+  progress: SyncProgress;
+}
+
 export class SyncSession {
   private ws: TauriWebSocket | null = null;
   private wsUnlisten: (() => void) | null = null;
-  private pc: RTCPeerConnection | null = null;
-  private dc: RTCDataChannel | null = null;
   private closed = false;
   private currentStatus: SyncStatus = "idle";
 
   /** Our stable id for this session (used in the offerer tie-breaker). */
   private readonly myId: string;
-  /** The remote peer's id, learned from its announce/offer. */
-  private peerId: string | null = null;
 
-  /** Cached local vault, loaded lazily at sync time. */
+  /** All connected/connecting peers, keyed by their app id (announce senderId). */
+  private readonly peers = new Map<string, Peer>();
+
+  /** Cached local vault, loaded lazily at sync time (shared across peers). */
   private local: { bytes: Uint8Array; lastModified: number } | null = null;
+  /** De-dupes the async `loadLocal()` so a peer's metadata never races it. */
+  private localPromise: Promise<{ bytes: Uint8Array; lastModified: number }> | null = null;
 
-  // Sync-protocol bookkeeping.
-  private peerMetaComplete = false;
-  private pullInFlight = false;
-  private didApply = false;
-  private incoming: IncomingTransfer | null = null;
-
-  private progress: SyncProgress = { sent: 0, sentTotal: 0, received: 0, receivedTotal: 0 };
+  /** Fires after a lull to settle the status if a transfer/response stalled. */
+  private settleTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly opts: SyncSessionOptions,
@@ -189,7 +205,7 @@ export class SyncSession {
       await this.onSignal(m.data);
     } else if (m.type === "Close") {
       if (this.closed) return;
-      if (this.currentStatus !== "done" && this.dc?.readyState !== "open") {
+      if (this.currentStatus !== "done" && !this.hasOpenPeer()) {
         const code = m.data?.code;
         this.handlers.onLog(`Signaling connection closed${code ? ` (code ${code})` : ""}.`);
       }
@@ -201,6 +217,7 @@ export class SyncSession {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.clearSettleTimer();
     try {
       this.send({ type: "leave", roomId: this.opts.room });
     } catch {
@@ -211,26 +228,64 @@ export class SyncSession {
     } catch {
       /* ignore */
     }
-    try {
-      this.dc?.close();
-    } catch {
-      /* ignore */
+    for (const peer of this.peers.values()) {
+      try {
+        peer.dc?.close();
+        peer.pc.close();
+      } catch {
+        /* ignore */
+      }
     }
-    try {
-      this.pc?.close();
-    } catch {
-      /* ignore */
-    }
+    this.peers.clear();
     void this.ws?.disconnect().catch(() => {});
     this.wsUnlisten = null;
-    this.dc = null;
-    this.pc = null;
     this.ws = null;
+  }
+
+  /** Whether any peer's data channel is currently open. */
+  private hasOpenPeer(): boolean {
+    for (const p of this.peers.values()) if (p.dc?.readyState === "open") return true;
+    return false;
   }
 
   private setStatus(status: SyncStatus): void {
     this.currentStatus = status;
+    if (status === "syncing") this.bumpSettleWatchdog();
+    else this.clearSettleTimer();
     this.handlers.onStatus(status);
+  }
+
+  /**
+   * Arm/refresh a watchdog while syncing. Transfer progress refreshes it, so it
+   * only fires after a genuine lull — at which point any peer still flagged
+   * mid-transfer (a dropped chunk stream or an unanswered pull/response) is
+   * treated as settled, so the status can't get pinned on "Syncing…".
+   */
+  private bumpSettleWatchdog(): void {
+    if (this.closed) return;
+    if (this.settleTimer) clearTimeout(this.settleTimer);
+    this.settleTimer = setTimeout(() => this.forceSettle(), 12_000);
+  }
+
+  private clearSettleTimer(): void {
+    if (this.settleTimer) {
+      clearTimeout(this.settleTimer);
+      this.settleTimer = null;
+    }
+  }
+
+  private forceSettle(): void {
+    if (this.closed) return;
+    let stalled = false;
+    for (const p of this.peers.values()) {
+      if (p.incoming || p.pullInFlight) {
+        p.incoming = null;
+        p.pullInFlight = false;
+        stalled = true;
+      }
+    }
+    if (stalled) this.handlers.onLog("Sync idle — settling.");
+    this.recomputeStatus();
   }
 
   // ── Signaling ───────────────────────────────────────────────────────────────
@@ -254,10 +309,7 @@ export class SyncSession {
         this.send({ type: "pong" });
         return;
       case "joined":
-        if (typeof msg.peerCount === "number") {
-          this.handlers.onPeers(msg.peerCount);
-          if (msg.peerCount > 0) this.setStatus("negotiating");
-        }
+        // Informational; peer presence is driven by announce/offer below.
         return;
       case "announce":
         await this.onAnnounce(msg);
@@ -265,28 +317,24 @@ export class SyncSession {
       case "offer":
         await this.onOffer(msg);
         return;
-      case "answer":
+      case "answer": {
         if (msg.targetId && msg.targetId !== this.myId) return;
-        await this.pc?.setRemoteDescription({ type: "answer", sdp: getSdp(msg) });
+        const peer = msg.senderId ? this.peers.get(String(msg.senderId)) : undefined;
+        await peer?.pc.setRemoteDescription({ type: "answer", sdp: getSdp(msg) });
         return;
+      }
       case "candidate":
         await this.onCandidate(msg);
         return;
       case "peer_left":
       case "peer-left":
-        this.handlers.onPeers(0);
-        if (!this.closed && this.currentStatus !== "done") {
-          this.handlers.onLog("Peer left the room.");
-        }
-        // Tear down the stale peer connection and reset per-peer state so the
-        // next peer (e.g. the mobile auto-reconnecting) gets a fresh handshake
-        // instead of being silently ignored (the cause of the stuck
-        // "establishing connection" loop).
-        this.resetForNewPeer();
-        if (!this.closed && this.currentStatus !== "done") this.setStatus("waiting");
+        // The server's `clientId` here is its own short id, not the app id we
+        // key peers by, so we can't map it to a specific peer. Departures are
+        // detected per-connection via `connectionstatechange` instead (matching
+        // the node). Nothing to do — other peers stay connected.
         return;
       case "server_shutdown":
-        if (this.currentStatus !== "done") this.fail("Signaling server shut down.");
+        if (!this.hasOpenPeer()) this.fail("Signaling server shut down.");
         return;
       default:
         return;
@@ -297,204 +345,216 @@ export class SyncSession {
   private async onAnnounce(msg: Record<string, any>): Promise<void> {
     const remoteId = String(msg.senderId ?? "");
     if (!remoteId || remoteId === this.myId) return;
-    this.peerId = remoteId;
-    this.handlers.onPeers(1);
-    this.setStatus("negotiating");
+
+    // Already have a connection to this peer — ignore the duplicate announce.
+    if (this.peers.has(remoteId)) return;
 
     const weAreOfferer = this.myId > remoteId;
     if (weAreOfferer) {
-      // Offer once; ignore duplicate announces while a connection exists.
-      if (!this.pc) {
-        this.ensurePeerConnection(true);
-        await this.makeOffer();
-      }
+      const peer = this.createPeer(remoteId, true);
+      await this.makeOffer(peer);
     } else {
       // Announce back so the offerer definitely knows about us, then wait.
       this.send({ type: "announce", senderId: this.myId, targetId: remoteId });
-      if (!this.pc) this.ensurePeerConnection(false);
+      this.createPeer(remoteId, false);
     }
+    this.recomputeStatus();
   }
 
   private async onOffer(msg: Record<string, any>): Promise<void> {
     if (msg.targetId && msg.targetId !== this.myId) return;
-    if (msg.senderId) this.peerId = String(msg.senderId);
-    this.handlers.onPeers(1);
-    this.setStatus("negotiating");
-    // Re-create a clean peer connection for this offer.
-    this.resetPeerConnection();
-    this.ensurePeerConnection(false);
-    await this.pc!.setRemoteDescription({ type: "offer", sdp: getSdp(msg) });
-    await this.makeAnswer();
+    const remoteId = String(msg.senderId ?? "");
+    if (!remoteId) return;
+
+    // A fresh offer (re)starts this peer's connection.
+    this.removePeer(remoteId);
+    const peer = this.createPeer(remoteId, false);
+    await peer.pc.setRemoteDescription({ type: "offer", sdp: getSdp(msg) });
+    await this.makeAnswer(peer);
+    this.recomputeStatus();
   }
 
   private async onCandidate(msg: Record<string, any>): Promise<void> {
     if (msg.targetId && msg.targetId !== this.myId) return;
+    const peer = msg.senderId ? this.peers.get(String(msg.senderId)) : undefined;
     const init = candidateInit(msg);
-    if (!init) return;
+    if (!peer || !init) return;
     try {
-      await this.pc?.addIceCandidate(init);
+      await peer.pc.addIceCandidate(init);
     } catch {
       /* may arrive before the remote description; browsers queue most */
     }
   }
 
-  // ── WebRTC ──────────────────────────────────────────────────────────────────
+  // ── WebRTC (per peer) ─────────────────────────────────────────────────────────
 
-  private resetPeerConnection(): void {
-    if (this.pc) {
-      try {
-        this.dc?.close();
-        this.pc.close();
-      } catch {
-        /* ignore */
-      }
-      this.pc = null;
-      this.dc = null;
-    }
-  }
-
-  /** Drop the peer connection and all per-peer sync state for a fresh round. */
-  private resetForNewPeer(): void {
-    this.resetPeerConnection();
-    this.peerId = null;
-    this.peerMetaComplete = false;
-    this.pullInFlight = false;
-    this.didApply = false;
-    this.incoming = null;
-    this.progress = { sent: 0, sentTotal: 0, received: 0, receivedTotal: 0 };
-    this.emitProgress();
-  }
-
-  private ensurePeerConnection(isOfferer: boolean): void {
-    if (this.pc) return;
-    this.pc = new RTCPeerConnection({
+  private createPeer(id: string, isOfferer: boolean): Peer {
+    const pc = new RTCPeerConnection({
       iceServers: this.opts.iceServers.map((s) => ({
         urls: s.urls,
         username: s.username ?? undefined,
         credential: s.credential ?? undefined,
       })),
     });
+    const peer: Peer = {
+      id,
+      pc,
+      dc: null,
+      metaComplete: false,
+      pullInFlight: false,
+      didApply: false,
+      incoming: null,
+      progress: { sent: 0, sentTotal: 0, received: 0, receivedTotal: 0 },
+    };
+    this.peers.set(id, peer);
 
-    this.pc.onicecandidate = (ev) => {
-      if (ev.candidate && this.peerId) {
+    pc.onicecandidate = (ev) => {
+      if (ev.candidate) {
         this.send({
           type: "candidate",
           senderId: this.myId,
-          targetId: this.peerId,
+          targetId: id,
           candidate: ev.candidate.candidate,
           mid: ev.candidate.sdpMid ?? "",
         });
       }
     };
-    this.pc.onconnectionstatechange = () => {
-      const state = this.pc?.connectionState;
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
       if (state === "connected") {
-        this.handlers.onLog("Peer connection established.");
+        this.handlers.onLog(`Peer ${id} connected.`);
       } else if (state === "disconnected") {
-        this.handlers.onLog("Peer connection interrupted, attempting to recover…");
-      } else if (state === "failed") {
-        if (!this.closed && this.currentStatus !== "done") {
-          this.fail(
-            "Peer connection failed — no direct path between the devices. " +
-              "Add a TURN server in Settings → Sync if they're on different networks.",
-          );
-        }
+        this.handlers.onLog(`Peer ${id} interrupted, attempting to recover…`);
+      } else if (state === "failed" || state === "closed") {
+        // Only this peer is affected — drop it and let the others continue. A
+        // failed peer can re-announce and we'll recreate it.
+        if (this.peers.get(id)?.pc === pc) this.removePeer(id, state);
       }
+      this.recomputeStatus();
     };
 
     if (isOfferer) {
-      this.setupDataChannel(this.pc.createDataChannel(DC_LABEL, { ordered: true }));
+      this.setupDataChannel(peer, pc.createDataChannel(DC_LABEL, { ordered: true }));
     } else {
-      this.pc.ondatachannel = (ev) => this.setupDataChannel(ev.channel);
+      pc.ondatachannel = (ev) => this.setupDataChannel(peer, ev.channel);
     }
+    return peer;
   }
 
-  private async makeOffer(): Promise<void> {
-    const offer = await this.pc!.createOffer();
-    await this.pc!.setLocalDescription(offer);
-    this.send({
-      type: "offer",
-      senderId: this.myId,
-      targetId: this.peerId,
-      sdp: offer.sdp,
-    });
+  /** Tear down and forget a single peer. */
+  private removePeer(id: string, reason?: string): void {
+    const peer = this.peers.get(id);
+    if (!peer) return;
+    this.peers.delete(id);
+    try {
+      peer.dc?.close();
+      peer.pc.close();
+    } catch {
+      /* ignore */
+    }
+    if (reason && !this.closed) this.handlers.onLog(`Peer ${id} ${reason}.`);
   }
 
-  private async makeAnswer(): Promise<void> {
-    const answer = await this.pc!.createAnswer();
-    await this.pc!.setLocalDescription(answer);
-    this.send({
-      type: "answer",
-      senderId: this.myId,
-      targetId: this.peerId,
-      sdp: answer.sdp,
-    });
+  private async makeOffer(peer: Peer): Promise<void> {
+    const offer = await peer.pc.createOffer();
+    await peer.pc.setLocalDescription(offer);
+    this.send({ type: "offer", senderId: this.myId, targetId: peer.id, sdp: offer.sdp });
   }
 
-  // ── Data channel ──────────────────────────────────────────────────────────────
+  private async makeAnswer(peer: Peer): Promise<void> {
+    const answer = await peer.pc.createAnswer();
+    await peer.pc.setLocalDescription(answer);
+    this.send({ type: "answer", senderId: this.myId, targetId: peer.id, sdp: answer.sdp });
+  }
 
-  private setupDataChannel(dc: RTCDataChannel): void {
-    this.dc = dc;
+  // ── Data channel (per peer) ────────────────────────────────────────────────────
+
+  private setupDataChannel(peer: Peer, dc: RTCDataChannel): void {
+    peer.dc = dc;
     dc.onopen = () => {
-      this.setStatus("syncing");
-      this.handlers.onLog("Peer link open. Exchanging vault metadata…");
-      void this.beginSync();
+      this.handlers.onLog(`Peer ${peer.id} link open. Exchanging vault metadata…`);
+      this.recomputeStatus();
+      void this.beginSync(peer);
     };
-    dc.onmessage = (ev) => void this.onDataMessage(ev.data);
+    dc.onmessage = (ev) => void this.onDataMessage(peer, ev.data);
     dc.onerror = () => {
-      if (!this.closed && this.currentStatus !== "done") this.handlers.onLog("Data channel error.");
+      if (!this.closed) this.handlers.onLog(`Data channel error with ${peer.id}.`);
     };
+    dc.onclose = () => this.recomputeStatus();
   }
 
-  private dcSend(msg: Record<string, unknown>): void {
-    if (this.dc?.readyState === "open") this.dc.send(JSON.stringify(msg));
+  private dcSend(peer: Peer, msg: Record<string, unknown>): void {
+    if (peer.dc?.readyState === "open") peer.dc.send(JSON.stringify(msg));
   }
 
-  /** True once a peer data channel is open (ready to push live updates). */
+  /** True once at least one peer data channel is open (ready for live pushes). */
   isLive(): boolean {
-    return !this.closed && this.dc?.readyState === "open";
+    return !this.closed && this.hasOpenPeer();
   }
 
   /**
-   * Proactively push the current local vault to the connected peer (called
-   * after a save). No-op if no peer link is open. Mirrors the mobile node's
-   * push-on-local-change behaviour.
+   * Push the current local vault to every connected peer (called after a save).
+   * No-op if no peer link is open. Mirrors the node's push-on-local-change.
    */
   async pushUpdate(): Promise<void> {
     if (!this.isLive()) return;
+    let local: { bytes: Uint8Array; lastModified: number };
     try {
-      const local = await this.opts.loadLocal();
+      local = await this.opts.loadLocal();
       this.local = local;
-      this.setStatus("syncing");
-      this.handlers.onLog("Pushing local changes to peer…");
-      await this.sendChunked("push_request", {
-        filename: this.opts.filename,
-        fileData: bytesToBase64(local.bytes),
-        lastModified: local.lastModified,
-      });
-      this.handlers.onLog("Local changes pushed.");
-      if (!this.closed) this.setStatus("done");
     } catch (e) {
       this.handlers.onLog(`Push failed: ${String(e)}`);
-    }
-  }
-
-  /** Kick off the symmetric metadata exchange once the channel is open. */
-  private async beginSync(): Promise<void> {
-    try {
-      this.local = await this.opts.loadLocal();
-    } catch (e) {
-      this.fail(`Could not read the local vault: ${String(e)}`);
       return;
     }
-    this.dcSend({ type: "metadata_query" });
-    this.advertiseMetadata();
-    this.dcSend({ type: "metadata_complete" });
+    const fileData = bytesToBase64(local.bytes);
+    const open = [...this.peers.values()].filter((p) => p.dc?.readyState === "open");
+    this.handlers.onLog(`Pushing local changes to ${open.length} peer(s)…`);
+    await Promise.all(
+      open.map((peer) =>
+        this.sendChunked(peer, "push_request", {
+          filename: this.opts.filename,
+          fileData,
+          lastModified: local.lastModified,
+        }).catch((e) => this.handlers.onLog(`Push to ${peer.id} failed: ${String(e)}`)),
+      ),
+    );
+    this.handlers.onLog("Local changes pushed.");
+    this.recomputeStatus();
   }
 
-  private advertiseMetadata(): void {
+  /**
+   * Load the local vault once, shared across peers. Awaited everywhere the
+   * local version is needed so an incoming `metadata_info` can never be compared
+   * before our own version is known (which previously read 0 → spurious pull).
+   */
+  private async ensureLocal(): Promise<{ bytes: Uint8Array; lastModified: number }> {
+    if (this.local) return this.local;
+    if (!this.localPromise) {
+      this.localPromise = this.opts.loadLocal().catch((e) => {
+        this.localPromise = null;
+        throw e;
+      });
+    }
+    this.local = await this.localPromise;
+    return this.local;
+  }
+
+  /** Kick off the symmetric metadata exchange once a peer's channel is open. */
+  private async beginSync(peer: Peer): Promise<void> {
+    try {
+      await this.ensureLocal();
+    } catch (e) {
+      this.handlers.onLog(`Could not read the local vault: ${String(e)}`);
+      return;
+    }
+    this.dcSend(peer, { type: "metadata_query" });
+    this.advertiseMetadata(peer);
+    this.dcSend(peer, { type: "metadata_complete" });
+  }
+
+  private advertiseMetadata(peer: Peer): void {
     if (!this.local) return;
-    this.dcSend({
+    this.dcSend(peer, {
       type: "metadata_info",
       filename: this.opts.filename,
       lastModified: this.local.lastModified,
@@ -502,7 +562,7 @@ export class SyncSession {
     });
   }
 
-  private async onDataMessage(data: unknown): Promise<void> {
+  private async onDataMessage(peer: Peer, data: unknown): Promise<void> {
     let msg: Record<string, any>;
     try {
       msg = JSON.parse(typeof data === "string" ? data : new TextDecoder().decode(data as ArrayBuffer));
@@ -512,7 +572,7 @@ export class SyncSession {
 
     switch (msg.type) {
       case "file_chunk_start":
-        this.incoming = {
+        peer.incoming = {
           msgType: msg.msgType,
           filename: msg.filename,
           lastModified: msg.lastModified ?? 0,
@@ -520,27 +580,26 @@ export class SyncSession {
           chunks: new Array(msg.totalChunks ?? 0),
           received: 0,
         };
-        this.progress.received = 0;
-        this.progress.receivedTotal = msg.totalChunks ?? 0;
-        this.emitProgress();
-        this.handlers.onLog(`Receiving ${msg.msgType} (${msg.totalChunks} chunks)…`);
+        peer.progress = { sent: 0, sentTotal: 0, received: 0, receivedTotal: msg.totalChunks ?? 0 };
+        this.emitProgress(peer);
+        this.handlers.onLog(`Receiving ${msg.msgType} from ${peer.id} (${msg.totalChunks} chunks)…`);
         return;
       case "file_chunk": {
-        const t = this.incoming;
+        const t = peer.incoming;
         if (!t) return;
         if (t.chunks[msg.chunkIndex] === undefined) t.received++;
         t.chunks[msg.chunkIndex] = msg.chunkData;
-        this.progress.receivedTotal = t.totalChunks;
-        this.progress.received = t.received;
-        this.emitProgress();
+        peer.progress.receivedTotal = t.totalChunks;
+        peer.progress.received = t.received;
+        this.emitProgress(peer);
         return;
       }
       case "file_chunk_end": {
-        const t = this.incoming;
-        this.incoming = null;
+        const t = peer.incoming;
+        peer.incoming = null;
         if (!t) return;
         const fileData = t.chunks.join("");
-        await this.handleAppMessage({
+        await this.handleAppMessage(peer, {
           type: t.msgType,
           filename: t.filename,
           fileData,
@@ -549,142 +608,146 @@ export class SyncSession {
         return;
       }
       case "dc_ping":
-        this.dcSend({ type: "dc_pong" });
+        this.dcSend(peer, { type: "dc_pong" });
         return;
       case "dc_pong":
         return;
       default:
-        await this.handleAppMessage(msg);
+        await this.handleAppMessage(peer, msg);
     }
   }
 
-  // ── Sync protocol ──────────────────────────────────────────────────────────────
+  // ── Sync protocol (per peer) ────────────────────────────────────────────────────
 
-  private async handleAppMessage(msg: Record<string, any>): Promise<void> {
+  private async handleAppMessage(peer: Peer, msg: Record<string, any>): Promise<void> {
     switch (msg.type) {
       case "metadata_query":
-        if (!this.local) this.local = await this.opts.loadLocal().catch(() => null as any);
-        this.advertiseMetadata();
-        this.dcSend({ type: "metadata_complete" });
+        await this.ensureLocal().catch(() => {});
+        this.advertiseMetadata(peer);
+        this.dcSend(peer, { type: "metadata_complete" });
         return;
       case "metadata_info":
-        this.onMetadataInfo(msg);
+        await this.onMetadataInfo(peer, msg);
         return;
       case "metadata_complete":
-        this.peerMetaComplete = true;
-        this.maybeDone();
+        peer.metaComplete = true;
+        this.maybeDone(peer);
         return;
       case "pull_request":
-        await this.onPullRequest(msg);
+        await this.onPullRequest(peer, msg);
         return;
       case "pull_response":
-        await this.onPullResponse(msg);
+        await this.onPullResponse(peer, msg);
         return;
       case "push_request":
-        await this.onPushRequest(msg);
+        await this.onPushRequest(peer, msg);
         return;
       case "push_response":
-        this.handlers.onLog(`Peer ${msg.status === "success" ? "accepted" : "skipped"} our vault.`);
-        this.maybeDone();
+        this.handlers.onLog(`Peer ${peer.id} ${msg.status === "success" ? "accepted" : "skipped"} our vault.`);
+        this.maybeDone(peer);
         return;
       case "sync_complete":
-        this.maybeDone();
+        this.maybeDone(peer);
         return;
       default:
         return;
     }
   }
 
-  private onMetadataInfo(msg: Record<string, any>): void {
-    // Only consider the file that matches our vault; ignore unrelated files so
-    // we never merge a stranger's database into ours.
+  private async onMetadataInfo(peer: Peer, msg: Record<string, any>): Promise<void> {
+    // Only consider the file that matches our vault; never merge a stranger's DB.
     if (msg.filename !== this.opts.filename) {
       this.handlers.onLog(
-        `Peer advertises "${msg.filename}", which doesn't match this vault ("${this.opts.filename}"). Ignoring.`,
+        `Peer ${peer.id} advertises "${msg.filename}", which doesn't match this vault ("${this.opts.filename}"). Ignoring.`,
       );
       return;
     }
+    // Ensure our own version is loaded before comparing — otherwise a fast
+    // metadata_info races loadLocal() and compares against 0 → spurious pull.
+    await this.ensureLocal().catch(() => {});
     const remote = Number(msg.lastModified ?? 0);
     const localMtime = this.local?.lastModified ?? 0;
+    this.handlers.onLog(
+      `Compare ${peer.id}: peer=${remote} local=${localMtime} Δ=${remote - localMtime}`,
+    );
     if (remote - localMtime > MTIME_EPSILON) {
-      this.handlers.onLog("Peer has a newer vault — pulling.");
-      this.pullInFlight = true;
-      this.dcSend({ type: "pull_request", filename: this.opts.filename });
+      this.handlers.onLog(`Peer ${peer.id} has a newer vault — pulling.`);
+      peer.pullInFlight = true;
+      this.dcSend(peer, { type: "pull_request", filename: this.opts.filename });
+      this.recomputeStatus();
     } else {
-      this.handlers.onLog("Local vault is up to date or newer.");
-      this.maybeDone();
+      this.maybeDone(peer);
     }
   }
 
-  private async onPullRequest(msg: Record<string, any>): Promise<void> {
+  private async onPullRequest(peer: Peer, msg: Record<string, any>): Promise<void> {
     if (msg.filename !== this.opts.filename) return;
-    if (!this.local) this.local = await this.opts.loadLocal();
-    await this.sendChunked("pull_response", {
+    const local = await this.ensureLocal();
+    await this.sendChunked(peer, "pull_response", {
       filename: this.opts.filename,
-      fileData: bytesToBase64(this.local.bytes),
-      lastModified: this.local.lastModified,
+      fileData: bytesToBase64(local.bytes),
+      lastModified: local.lastModified,
     });
-    this.handlers.onLog("Sent our vault to the peer.");
+    this.handlers.onLog(`Sent our vault to ${peer.id}.`);
   }
 
-  private async onPullResponse(msg: Record<string, any>): Promise<void> {
-    this.pullInFlight = false;
-    await this.applyReceived(msg.fileData);
-    this.dcSend({
+  private async onPullResponse(peer: Peer, msg: Record<string, any>): Promise<void> {
+    peer.pullInFlight = false;
+    await this.applyReceived(peer, msg.fileData, Number(msg.lastModified ?? 0));
+    this.dcSend(peer, {
       type: "sync_complete",
       filename: this.opts.filename,
       lastModified: this.local?.lastModified ?? Date.now(),
       status: "success",
       message: "File accepted and merged",
     });
-    this.maybeDone();
+    this.maybeDone(peer);
   }
 
-  private async onPushRequest(msg: Record<string, any>): Promise<void> {
+  private async onPushRequest(peer: Peer, msg: Record<string, any>): Promise<void> {
     if (msg.filename !== this.opts.filename) {
-      this.dcSend({ type: "push_response", filename: msg.filename, status: "ignored", message: "Unknown vault" });
+      this.dcSend(peer, { type: "push_response", filename: msg.filename, status: "ignored", message: "Unknown vault" });
       return;
     }
-    const changed = await this.applyReceived(msg.fileData);
-    this.dcSend({
+    const changed = await this.applyReceived(peer, msg.fileData, Number(msg.lastModified ?? 0));
+    this.dcSend(peer, {
       type: "push_response",
       filename: this.opts.filename,
       status: changed ? "success" : "ignored",
       message: changed ? "File accepted and merged" : "Local file is newer or identical",
     });
-    this.maybeDone();
+    this.maybeDone(peer);
   }
 
-  /** Decode + merge a received base64 vault, refresh local metadata. */
-  private async applyReceived(fileDataB64: string): Promise<boolean> {
+  /** Decode + merge a received base64 vault into the shared local vault. */
+  private async applyReceived(
+    peer: Peer,
+    fileDataB64: string,
+    remoteMtime: number,
+  ): Promise<boolean> {
     try {
       const bytes = base64ToBytes(fileDataB64);
-      this.handlers.onLog("Merging received vault…");
-      const { changed, lastModified, result } = await this.opts.applyRemote(bytes);
-      this.didApply = true;
+      this.handlers.onLog(`Merging vault received from ${peer.id}…`);
+      const { changed, lastModified, result } = await this.opts.applyRemote(bytes, remoteMtime);
+      peer.didApply = true;
       this.handlers.onMerged(result);
-      // Refresh our cached local snapshot so a subsequent advertise/pull is current.
-      this.local = { bytes: await this.exportLocalBytes(), lastModified };
+      // Refresh the shared local snapshot so later advertises/pulls are current.
+      this.local = { bytes: (await this.opts.loadLocal()).bytes, lastModified };
       this.handlers.onLog(
-        changed
-          ? `Merged: +${result.created} new, ${result.updated} updated.`
-          : "Merged: no changes.",
+        changed ? `Merged: +${result.created} new, ${result.updated} updated.` : "Merged: no changes.",
       );
       return changed;
     } catch (e) {
-      this.fail(`Merge failed: ${String(e)}`);
+      // A merge failure for one peer must not tear down the whole mesh.
+      this.handlers.onError(`Merge failed: ${String(e)}`);
+      this.handlers.onLog(`Merge from ${peer.id} failed: ${String(e)}`);
       return false;
     }
   }
 
-  /** Re-read the local bytes after a merge (the on-disk vault changed). */
-  private async exportLocalBytes(): Promise<Uint8Array> {
-    const next = await this.opts.loadLocal();
-    return next.bytes;
-  }
-
-  /** Chunked send matching the node's file_chunk_* framing + SHA-256. */
+  /** Chunked send to one peer, matching the node's file_chunk_* framing. */
   private async sendChunked(
+    peer: Peer,
     msgType: string,
     payload: { filename: string; fileData: string; lastModified: number },
   ): Promise<void> {
@@ -693,7 +756,7 @@ export class SyncSession {
     const transferId = `${msgType}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
     const sha256 = await sha256Hex(fileData);
 
-    this.dcSend({
+    this.dcSend(peer, {
       type: "file_chunk_start",
       transferId,
       filename: payload.filename,
@@ -703,28 +766,27 @@ export class SyncSession {
       sha256,
     });
 
-    this.progress.sent = 0;
-    this.progress.sentTotal = totalChunks;
-    this.emitProgress();
+    peer.progress = { sent: 0, sentTotal: totalChunks, received: 0, receivedTotal: 0 };
+    this.emitProgress(peer);
 
     for (let i = 0; i < totalChunks; i++) {
-      if (this.closed || !this.dc) return;
-      await this.waitForDrain();
-      this.dcSend({
+      if (this.closed || peer.dc?.readyState !== "open") return;
+      await this.waitForDrain(peer);
+      this.dcSend(peer, {
         type: "file_chunk",
         transferId,
         chunkIndex: i,
         chunkData: fileData.slice(i * CHUNK_CHARS, (i + 1) * CHUNK_CHARS),
       });
-      this.progress.sent = i + 1;
-      this.emitProgress();
+      peer.progress.sent = i + 1;
+      this.emitProgress(peer);
       if (i > 0 && i % 20 === 0) await new Promise((r) => setTimeout(r, 1));
     }
-    this.dcSend({ type: "file_chunk_end", transferId });
+    this.dcSend(peer, { type: "file_chunk_end", transferId });
   }
 
-  private async waitForDrain(): Promise<void> {
-    const dc = this.dc;
+  private async waitForDrain(peer: Peer): Promise<void> {
+    const dc = peer.dc;
     if (!dc) return;
     while (dc.bufferedAmount > MAX_BUFFERED) {
       if (this.closed || dc.readyState !== "open") return;
@@ -732,17 +794,42 @@ export class SyncSession {
     }
   }
 
-  /** Mark the sync done once the peer finished advertising and no pull is open. */
-  private maybeDone(): void {
-    if (this.closed || this.currentStatus === "done") return;
-    if (this.peerMetaComplete && !this.pullInFlight) {
-      this.setStatus("done");
-      this.handlers.onLog(this.didApply ? "Sync complete." : "Sync complete — already in sync.");
+  /** Log per-peer completion and recompute the aggregate session status. */
+  private maybeDone(peer: Peer): void {
+    if (this.closed) return;
+    if (peer.metaComplete && !peer.pullInFlight && peer.didApply) {
+      this.handlers.onLog(`Sync with ${peer.id} complete.`);
     }
+    this.recomputeStatus();
   }
 
-  private emitProgress(): void {
-    this.handlers.onProgress({ ...this.progress });
+  /**
+   * Aggregate the mesh into one session status + peer count for the UI:
+   * `syncing` while any open peer is still exchanging, `done` once all open
+   * peers are settled, `negotiating`/`waiting` when none are connected yet.
+   */
+  private recomputeStatus(): void {
+    if (this.closed || this.currentStatus === "error") return;
+    const peers = [...this.peers.values()];
+    const open = peers.filter((p) => p.dc?.readyState === "open");
+    this.handlers.onPeers(open.length);
+
+    if (open.length === 0) {
+      this.setStatus(peers.length > 0 ? "negotiating" : "waiting");
+      return;
+    }
+    // A peer is "busy" only while actively transferring — receiving a file
+    // (`incoming`) or awaiting a pull we requested. We deliberately don't gate
+    // on `metaComplete`: a connected, idle peer is considered in-sync ("done"),
+    // so a missed `metadata_complete` can't pin the status on "Syncing…".
+    const busy = open.some((p) => p.pullInFlight || p.incoming);
+    this.setStatus(busy ? "syncing" : "done");
+  }
+
+  private emitProgress(peer: Peer): void {
+    // Transfer activity refreshes the settle watchdog so it only fires on a lull.
+    if (this.currentStatus === "syncing") this.bumpSettleWatchdog();
+    this.handlers.onProgress({ ...peer.progress });
   }
 
   private fail(message: string): void {

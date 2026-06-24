@@ -1,9 +1,12 @@
 import { create } from "zustand";
 import {
   saveDatabase,
+  setFileMtime,
   statFile,
   syncExportSnapshot,
+  syncGetMtime,
   syncMergeSnapshot,
+  syncSetMtime,
   type MergeResult,
 } from "@/services/tauri";
 import { SyncSession, type SyncProgress, type SyncStatus } from "@/lib/webrtc";
@@ -88,29 +91,77 @@ export const useSyncStore = create<SyncState>((set, get) => {
       error: null,
     });
 
-    // Read the current vault as encrypted bytes + on-disk mtime. Save first if
-    // there are unsaved edits so the advertised mtime matches what we send.
+    // Probe the persisted version store once. If the command is missing, the
+    // running Rust backend is stale (e.g. launched via `npm run dev`, which only
+    // builds the frontend) — surface it, since without it the vault re-pulls
+    // every reconnect.
+    void syncGetMtime(filename).catch(() =>
+      pushLog(
+        "⚠ Sync version store unavailable — the Rust backend is out of date. " +
+          "Rebuild & run with `npm run tauri dev` (not `npm run dev`).",
+      ),
+    );
+
+    // The advertised version is a persisted *logical* clock (Rust-backed, like
+    // the mobile app's), NOT the raw filesystem mtime — that's the key to
+    // convergence. We advertise exactly the version we last converged to, so a
+    // peer that holds the same version sees us as equal and neither side pulls.
     const loadLocal = async () => {
-      if (useSessionStore.getState().dirty) {
+      const wasDirty = useSessionStore.getState().dirty;
+      if (wasDirty) {
         await saveDatabase();
         useSessionStore.getState().setDirty(false);
       }
       const { bytes } = await syncExportSnapshot();
       const stat = await statFile(metadata.path).catch(() => null);
-      return { bytes, lastModified: stat?.modified ?? Date.now() };
+      const fileMtime = stat?.modified ?? Date.now();
+      const known = await syncGetMtime(filename).catch(() => 0);
+
+      let lastModified: number;
+      if (wasDirty) {
+        // A local edit just landed → it's a new version (now).
+        lastModified = fileMtime;
+      } else if (known > 0 && fileMtime <= known + 1500) {
+        // Use our converged logical version (don't let a raw fs mtime inflate it).
+        lastModified = known;
+      } else {
+        // First time, or the file changed outside the app (mtime jumped past our
+        // recorded version) → adopt the filesystem mtime as the new version.
+        lastModified = fileMtime;
+      }
+      await syncSetMtime(filename, lastModified).catch(() => {});
+      pushLog(`Advertise version=${lastModified} (file=${fileMtime}, known=${known}, dirty=${wasDirty})`);
+      return { bytes, lastModified };
     };
 
     // Merge received bytes into the open vault, persist, and refresh the UI.
-    const applyRemote = async (bytes: Uint8Array) => {
+    // `remoteMtime` is the peer's content-version timestamp; we adopt it locally
+    // so an already-in-sync vault isn't re-pulled on every reconnect (the node
+    // tracks a logical content mtime, not our filesystem mtime).
+    const applyRemote = async (bytes: Uint8Array, remoteMtime: number) => {
       const result = await syncMergeSnapshot(bytes);
+      let lastModified: number;
       if (result.changed) {
+        // The merge produced a genuinely new version both sides converge to.
         await saveDatabase();
         useSessionStore.getState().setDirty(false);
         const db = useDatabaseStore.getState();
         await Promise.all([db.refreshTree(), db.refreshEntries(), db.refreshTags()]);
+        const stat = await statFile(metadata.path).catch(() => null);
+        const fileMtime = stat?.modified ?? Date.now();
+        // Make it strictly the newest so peers pull this merged result.
+        lastModified = Math.max(fileMtime, remoteMtime + 1000);
+      } else {
+        // No content change — converge to the peer's version *exactly* (like the
+        // mobile's recordRemoteApply). Using max() here would inflate our
+        // version above the peer's and make it pull back from us forever.
+        lastModified = remoteMtime;
       }
-      const stat = await statFile(metadata.path).catch(() => null);
-      return { changed: result.changed, lastModified: stat?.modified ?? Date.now(), result };
+      // Persist the converged version (authoritative) and align the file mtime.
+      await syncSetMtime(filename, lastModified).catch(() => {});
+      await setFileMtime(metadata.path, lastModified).catch(() => {});
+      pushLog(`Adopt version=${lastModified} (remote=${remoteMtime}, changed=${result.changed})`);
+      return { changed: result.changed, lastModified, result };
     };
 
     const session = new SyncSession(

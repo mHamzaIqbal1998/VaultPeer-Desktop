@@ -325,7 +325,9 @@ function ActiveSession({
             </button>
           </div>
           <div className="mt-1 text-xs text-text-muted">
-            {peerCount > 0 ? "Peer connected" : "Waiting for a peer to join…"}
+            {peerCount > 0
+              ? `${peerCount} peer${peerCount === 1 ? "" : "s"} connected`
+              : "Waiting for a peer to join…"}
           </div>
         </div>
       </div>

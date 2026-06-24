@@ -845,6 +845,21 @@ export async function statFile(path: string): Promise<FileMeta> {
   return invoke<FileMeta>("stat_file", { path });
 }
 
+/** Set a file's last-modified time (epoch ms) — used by P2P sync. */
+export async function setFileMtime(path: string, mtimeMs: number): Promise<void> {
+  await invoke("set_file_mtime", { path, mtimeMs });
+}
+
+/** Read the remembered converged sync version (epoch ms) for a vault filename. */
+export async function syncGetMtime(filename: string): Promise<number> {
+  return invoke<number>("sync_get_mtime", { filename });
+}
+
+/** Persist a converged sync version for a vault filename (monotonic). */
+export async function syncSetMtime(filename: string, mtime: number): Promise<void> {
+  await invoke("sync_set_mtime", { filename, mtime });
+}
+
 // ── Phase 8: P2P synchronization ──────────────────────────────────────────────
 
 /** A lightweight description of a vault's state (mirrors Rust `VaultFingerprint`). */

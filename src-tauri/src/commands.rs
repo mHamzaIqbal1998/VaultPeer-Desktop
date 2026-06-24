@@ -47,6 +47,60 @@ pub fn stat_file(path: String) -> AppResult<FileMeta> {
     fs_ops::stat_file(&PathBuf::from(path))
 }
 
+/// Set a file's last-modified time (Unix epoch milliseconds). Used by P2P sync
+/// to adopt a peer's content-version timestamp (PLAN Phase 8).
+#[tauri::command]
+pub fn set_file_mtime(path: String, mtime_ms: f64) -> AppResult<()> {
+    fs_ops::set_file_mtime(&PathBuf::from(path), mtime_ms.max(0.0) as u64)
+}
+
+// ── Phase 8: persisted P2P sync version clock ─────────────────────────────────
+//
+// The sync protocol identifies a vault version by an epoch-ms timestamp. Relying
+// on the filesystem mtime is unreliable (truncation, cloud folders, WebView
+// localStorage not surviving restarts), so — like the mobile app's SecureStore-
+// backed clock — we persist the highest version we've converged to, per vault
+// filename, in a small JSON file in the app-config dir.
+
+fn sync_mtimes_path<R: Runtime>(app: &AppHandle<R>) -> AppResult<PathBuf> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| AppError::Other(format!("could not resolve app config dir: {e}")))?;
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("sync_mtimes.json"))
+}
+
+fn load_sync_mtimes<R: Runtime>(app: &AppHandle<R>) -> std::collections::HashMap<String, i64> {
+    match sync_mtimes_path(app).and_then(|p| Ok(std::fs::read(p)?)) {
+        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+        Err(_) => std::collections::HashMap::new(),
+    }
+}
+
+/// Read the remembered converged version (epoch ms) for a vault, or 0 if none.
+#[tauri::command]
+pub fn sync_get_mtime(app: AppHandle, filename: String) -> i64 {
+    load_sync_mtimes(&app).get(&filename).copied().unwrap_or(0)
+}
+
+/// Remember the converged version for a vault. Overwrites (not monotonic): the
+/// value reflects the exact version we last converged to with a peer, mirroring
+/// the mobile app's `recordRemoteApply`/`recordLocalWrite`. Using `max` here
+/// would let our advertised version drift above the peer's, causing the peer to
+/// perpetually pull back from us.
+#[tauri::command]
+pub fn sync_set_mtime(app: AppHandle, filename: String, mtime: f64) -> AppResult<()> {
+    let value = mtime.max(0.0) as i64;
+    let mut map = load_sync_mtimes(&app);
+    map.insert(filename, value);
+
+    let path = sync_mtimes_path(&app)?;
+    let json = serde_json::to_vec(&map)
+        .map_err(|e| AppError::Other(format!("could not serialize sync mtimes: {e}")))?;
+    fs_ops::write_file_atomic(&path, &json)
+}
+
 // ── Phase 2: database cryptography & unlock ─────────────────────────────────
 //
 // Open/create/save are CPU-heavy (Argon2 by design) so they run on the blocking
