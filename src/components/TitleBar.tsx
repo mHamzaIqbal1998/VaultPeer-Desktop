@@ -1,6 +1,7 @@
 import { WindowControls } from "./WindowControls";
 import { ThemeToggle } from "./ThemeToggle";
 import { ClipboardIndicator } from "./ClipboardIndicator";
+import { SyncStatus } from "./SyncStatus";
 import { useSessionStore } from "@/stores/sessionStore";
 import { lockDatabase } from "@/services/tauri";
 
@@ -16,9 +17,11 @@ interface TitleBarProps {
   onOpenSearch?: () => void;
   /** Open the settings panel (PLAN Phase 7). */
   onOpenSettings?: () => void;
+  /** Open the P2P sync panel (PLAN Phase 8). */
+  onOpenSync?: () => void;
 }
 
-export function TitleBar({ onOpenGenerator, onOpenSearch, onOpenSettings }: TitleBarProps) {
+export function TitleBar({ onOpenGenerator, onOpenSearch, onOpenSettings, onOpenSync }: TitleBarProps) {
   const metadata = useSessionStore((s) => s.metadata);
   const setLocked = useSessionStore((s) => s.setLocked);
   const isUnlocked = metadata !== null;
@@ -86,12 +89,7 @@ export function TitleBar({ onOpenGenerator, onOpenSearch, onOpenSettings }: Titl
               <path d="M10.7 13.3 17 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </ActionButton>
-          <ActionButton label="Sync status" disabled>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <path d="M4 12a8 8 0 0 1 14-5m2 5a8 8 0 0 1-14 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <path d="M18 3v4h-4M6 21v-4h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </ActionButton>
+          <SyncStatus onOpen={onOpenSync} />
           <ActionButton label="Lock database (Ctrl+L)" disabled={!isUnlocked} onClick={handleLock}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
               <rect x="5" y="10" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="2" />

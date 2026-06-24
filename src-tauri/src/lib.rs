@@ -17,6 +17,7 @@ mod otp;
 mod search;
 mod session;
 mod settings;
+mod sync;
 mod tray;
 
 use tauri::{Manager, WindowEvent};
@@ -51,7 +52,9 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
-        .plugin(tauri_plugin_dialog::init());
+        .plugin(tauri_plugin_dialog::init())
+        // Native WebSocket for P2P sync signaling (Phase 8) — see Cargo.toml.
+        .plugin(tauri_plugin_websocket::init());
 
     // The global-shortcut plugin is desktop-only; its handler dispatches
     // auto-type for the currently-focused window (works even when the app is
@@ -187,6 +190,9 @@ pub fn run() {
             commands::biometric_enroll,
             commands::biometric_unlock,
             commands::biometric_forget,
+            commands::sync_fingerprint,
+            commands::sync_export_snapshot,
+            commands::sync_merge_snapshot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VaultPeer");

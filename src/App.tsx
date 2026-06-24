@@ -7,6 +7,7 @@ import { MainLayout } from "@/components/MainLayout";
 import { PasswordGenerator } from "@/components/PasswordGenerator";
 import { SearchModal } from "@/components/SearchModal";
 import { SettingsPanel } from "@/components/SettingsPanel";
+import { SyncPanel } from "@/components/SyncPanel";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { matchesAccelerator } from "@/lib/shortcuts";
@@ -56,6 +57,7 @@ export default function App() {
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
   const [autoTypePick, setAutoTypePick] = useState<AutoTypePick>({
     open: false,
     windowTitle: "",
@@ -200,12 +202,22 @@ export default function App() {
         onOpenGenerator={() => setGeneratorOpen(true)}
         onOpenSearch={isUnlocked ? () => setSearchOpen(true) : undefined}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSync={() => setSyncOpen(true)}
       />
       <main className="flex-1 overflow-hidden">
         {isUnlocked ? <MainLayout /> : <UnlockScreen />}
       </main>
       {generatorOpen && <PasswordGenerator onClose={() => setGeneratorOpen(false)} />}
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+      {syncOpen && (
+        <SyncPanel
+          onClose={() => setSyncOpen(false)}
+          onOpenSettings={() => {
+            setSyncOpen(false);
+            setSettingsOpen(true);
+          }}
+        />
+      )}
       {searchOpen && isUnlocked && (
         <SearchModal onClose={() => setSearchOpen(false)} />
       )}

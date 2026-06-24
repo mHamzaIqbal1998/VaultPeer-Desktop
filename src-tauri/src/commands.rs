@@ -20,6 +20,7 @@ use crate::otp::{self, TotpCode};
 use crate::search::{self, SearchFilters, SearchHit};
 use crate::session::{OpenVault, VaultSession};
 use crate::settings::{self, AppSettings, SettingsState};
+use crate::sync::{self, MergeResult, SyncSnapshot, VaultFingerprint};
 use crate::tray::{self, TrayEntry};
 
 /// Hello-world sanity command (PLAN Phase 1).
@@ -802,4 +803,67 @@ pub async fn biometric_unlock(
 #[tauri::command]
 pub fn biometric_forget(app: AppHandle, path: String) -> AppResult<()> {
     crate::biometric::forget(&app, &path)
+}
+
+// ── Phase 8: P2P synchronization ──────────────────────────────────────────────
+//
+// The WebRTC transport + signaling run in the WebView (see `src/lib/webrtc.ts`);
+// these commands provide the encrypted snapshot to send and apply a received one
+// via the KeePass merge. Serialize/merge are CPU-heavy (re-encryption) so they
+// run on the blocking pool, mirroring the unlock/save commands.
+
+/// A lightweight description of the open vault's current state, exchanged with a
+/// peer before any bytes transfer so each side can skip an unnecessary sync.
+#[tauri::command]
+pub fn sync_fingerprint(session: State<'_, VaultSession>) -> AppResult<VaultFingerprint> {
+    with_db(&session, |db| Ok(sync::fingerprint(db)))
+}
+
+/// Serialize the open vault to encrypted KDBX bytes (with the session key) plus
+/// its fingerprint, for chunked transfer over the data channel (SYN-04).
+#[tauri::command]
+pub async fn sync_export_snapshot(session: State<'_, VaultSession>) -> AppResult<SyncSnapshot> {
+    let (db, key) = {
+        let guard = session.0.lock().expect("vault session mutex poisoned");
+        let vault = guard.as_ref().ok_or(AppError::NoOpenDatabase)?;
+        (vault.db.clone(), vault.key.clone())
+    };
+    tauri::async_runtime::spawn_blocking(move || sync::export_snapshot(&db, key))
+        .await
+        .map_err(join_err)?
+}
+
+/// Merge a received encrypted snapshot into the open vault (SYN-05). Tries the
+/// session key first, falling back to `password` if the peer's vault uses a
+/// different master password. The merged database is written back into the
+/// session; the frontend marks the session dirty and saves to persist it.
+#[tauri::command]
+pub async fn sync_merge_snapshot(
+    bytes: Vec<u8>,
+    password: Option<String>,
+    session: State<'_, VaultSession>,
+) -> AppResult<MergeResult> {
+    let (mut db, key) = {
+        let guard = session.0.lock().expect("vault session mutex poisoned");
+        let vault = guard.as_ref().ok_or(AppError::NoOpenDatabase)?;
+        (vault.db.clone(), vault.key.clone())
+    };
+
+    let (db, result) = tauri::async_runtime::spawn_blocking(move || {
+        let result = sync::merge_snapshot(&mut db, key, &bytes, password.as_deref())?;
+        Ok::<_, AppError>((db, result))
+    })
+    .await
+    .map_err(join_err)??;
+
+    // Write the merged database back into the session (the vault may have been
+    // locked while the merge ran; only apply if it's still open).
+    {
+        let mut guard = session.0.lock().expect("vault session mutex poisoned");
+        match guard.as_mut() {
+            Some(vault) => vault.db = db,
+            None => return Err(AppError::NoOpenDatabase),
+        }
+    }
+    Ok(result)
 }

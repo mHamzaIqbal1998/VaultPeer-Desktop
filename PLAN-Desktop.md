@@ -363,34 +363,69 @@ A refined adaptation of the mobile Cyber-Sage aesthetic optimized for desktop in
 
 **Focus**: Peer-to-peer vault synchronization between devices.
 
-- [ ] Research and select WebRTC Rust implementation:
-  - [ ] Evaluate `webrtc-rs` vs custom data channel implementation
-- [ ] Implement signaling client:
-  - [ ] WebSocket connection to signaling server
-  - [ ] Room creation/joining
-  - [ ] QR code generation for room IDs
-- [ ] Implement WebRTC peer connection:
-  - [ ] RTCPeerConnection setup
-  - [ ] Data channel negotiation
-  - [ ] ICE candidate handling
-  - [ ] Connection state management
-- [ ] Implement sync protocol:
-  - [ ] Metadata exchange (timestamps, checksums)
-  - [ ] File chunking for large databases
-  - [ ] Conflict detection and resolution
-  - [ ] Progress indication
-- [ ] Build sync UI:
-  - [ ] Sync mode selection (Offline/Network)
-  - [ ] Server URL configuration
-  - [ ] Room management (create, join, leave)
-  - [ ] Connected peers list with status
-  - [ ] QR code scanner for joining
-  - [ ] Sync status indicator in title bar
-- [ ] Implement ICE server configuration:
-  - [ ] Default STUN servers
-  - [ ] Custom TURN server support
+- [x] Research and select WebRTC Rust implementation:
+  - [x] Evaluate `webrtc-rs` vs custom data channel implementation (**Decision: run the WebRTC transport in the WebView's native, audited WebRTC stack on the frontend (`lib/webrtc.ts`) rather than the ~300-crate `webrtc-rs`.** This keeps the single-binary footprint small, shares one JS sync protocol with the React-based mobile app, and lets Rust own only what must never hit the wire in the clear — the **encrypted** snapshot and the merge.)
+- [x] Implement signaling client (`lib/webrtc.ts` `SyncSession`):
+  - [x] WebSocket connection to signaling server (JSON relay protocol documented in `webrtc.ts`; URL configured in Settings → Sync)
+  - [x] Room creation/joining (`syncStore.createRoom`/`joinRoom`; the peer already in the room becomes the WebRTC offerer to avoid offer glare)
+  - [x] QR code generation for room IDs (`lib/qr.ts`: `buildSyncInvite` → `vaultpeer://sync?room=…&server=…`, rendered to SVG via the bundled `qrcode`; shown in the active-session panel)
+- [x] Implement WebRTC peer connection:
+  - [x] RTCPeerConnection setup (`ensurePeerConnection`, configured with the user's ICE servers)
+  - [x] Data channel negotiation (`createDataChannel` on the offerer / `ondatachannel` on the answerer; `binaryType = "arraybuffer"`)
+  - [x] ICE candidate handling (`onicecandidate` relays via signaling; `addIceCandidate` on receipt)
+  - [x] Connection state management (`onconnectionstatechange`; `SyncStatus` state machine: connecting → waiting → negotiating → syncing → done/error)
+- [x] Implement sync protocol:
+  - [x] Metadata exchange (timestamps, checksums) (`sync_fingerprint` → `VaultFingerprint` with `latestModified` + FNV-1a `checksum`; peers swap `hello` and skip transfer when checksums match)
+  - [x] File chunking for large databases (16 KiB chunks with `bufferedAmount` backpressure; framed by `snap-start`/binary chunks/`snap-end`)
+  - [x] Conflict detection and resolution (native KeePass `Database::merge` via the `_merge` feature — UUID-based, newer-modification-wins, history-preserving; `sync::merge_snapshot` returns created/updated/relocated/deleted counts + warnings)
+  - [x] Progress indication (`SyncProgress` sent/received byte counters → progress bars in `SyncPanel`)
+- [x] Build sync UI:
+  - [x] Sync mode selection (Offline/Network) (`SyncPanel` segmented toggle; Offline tears down any session)
+  - [x] Server URL configuration (Settings → Sync tab, persisted in `AppSettings.sync.signalingUrl`)
+  - [x] Room management (create, join, leave) (`SyncPanel`; join accepts a room code or a scanned/pasted invite link)
+  - [x] Connected peers list with status (peer-connected/waiting indicator + live status chip; two-party rooms)
+  - [x] QR code scanner for joining (reuses the existing `QrScanner`/jsQR component; `parseSyncInvite` decodes the invite)
+  - [x] Sync status indicator in title bar (`SyncStatus` — colored status dot over the sync icon, opens the panel)
+- [x] Implement ICE server configuration:
+  - [x] Default STUN servers (`SyncConfig::default` seeds `stun:stun.l.google.com:19302`; mirrored in the frontend defaults)
+  - [x] Custom TURN server support (Settings → Sync: add/remove servers with optional TURN username/credential)
 
-**Deliverable**: P2P sync working between desktop and mobile app.
+**Deliverable**: P2P sync working between desktop and mobile app. ✅
+
+> Note: the WebRTC transport + WebSocket signaling run in the WebView (native,
+> cross-platform), so no `webrtc-rs` dependency is added and nothing
+> Windows-specific is introduced. The desktop speaks the **exact** VaultPeer
+> signaling + sync protocol used by the mobile app and the storage `Server-node`
+> (`WEBRTC-SERVERS/`): `{type:"join", roomId}` + `announce`/`senderId`/`targetId`
+> handshake (greater id offers), JSON data-channel messages, and the base64
+> `file_chunk_start`/`file_chunk`/`file_chunk_end` transfer with a SHA-256
+> integrity hash, plus the `metadata_query`/`metadata_info`/`pull_request`/
+> `pull_response`/`push_request` last-writer-wins flow and the app-level
+> `ping`/`pong` heartbeat. The vault only ever crosses the wire as the
+> **encrypted** `.kdbx` (over the DTLS-encrypted data channel); the decrypted
+> database never leaves the Rust backend. On receipt it is merged with the
+> KeePass-compatible `Database::merge` (`keepass` `_merge` feature) — strictly
+> better than pure file-LWW, and still protocol-compatible — then persisted.
+> The merge tolerates same-modification-time divergences (which abort the raw
+> keepass merge): such ties are broken in favour of the **incoming** copy by
+> nudging its timestamp, then retried, so a push always applies cleanly.
+> The signaling WebSocket runs **natively in Rust** via
+> `tauri-plugin-websocket` (driven from `lib/webrtc.ts` through its JS API),
+> because the WebView2 socket can hang in CONNECTING or be blocked by the app
+> CSP / Windows network stack; the native client (rustls) connects reliably.
+> Only the `RTCPeerConnection` stays in the WebView. The `websocket:default`
+> capability is granted in `capabilities/default.json`, and `connect-src` in
+> `tauri.conf.json` is still broadened (`ws: wss: stun: turn:`) for the WebRTC
+> ICE paths. Snapshots are normalized to the **Argon2d** KDF and **AES-256**
+> cipher for the widest reader compatibility: `kdbxweb` (the mobile app) rejects
+> Argon2id's UUID and keepass-rs's non-standard KDBX4 AES-KDF UUID (7c02bb82…)
+> as "bad KDF", and doesn't support Twofish — so Argon2id/AES-KDF → Argon2d and
+> Twofish → AES-256 on export, while the local on-disk vault keeps its own
+> settings. Each data-channel message is also kept under 16 KiB. The
+> one remaining requirement for a successful merge: the vault **filename must
+> match** across devices (the node's `KDBX_FILENAME` = the desktop vault's
+> basename), since peers identify a shared vault by filename. Backend logic is
+> covered by 5 Rust unit tests.
 
 ---
 

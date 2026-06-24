@@ -39,6 +39,10 @@ const DEFAULT_SETTINGS: AppSettings = {
     copyPassword: "Ctrl+C",
     copyUsername: "Ctrl+B",
   },
+  sync: {
+    signalingUrl: "",
+    iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+  },
 };
 
 interface SettingsState {

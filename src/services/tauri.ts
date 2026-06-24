@@ -670,6 +670,21 @@ export interface ShortcutBindings {
   copyUsername: string;
 }
 
+/** A single ICE (STUN/TURN) server for P2P sync (mirrors Rust `IceServerConfig`). */
+export interface IceServerConfig {
+  urls: string[];
+  username?: string | null;
+  credential?: string | null;
+}
+
+/** Persisted P2P sync configuration (mirrors Rust `SyncConfig`). */
+export interface SyncConfig {
+  /** `ws(s)://…` signaling server URL; empty until the user configures one. */
+  signalingUrl: string;
+  /** ICE servers for NAT traversal (STUN for discovery, TURN as relay). */
+  iceServers: IceServerConfig[];
+}
+
 /** All persisted application settings (mirrors Rust `AppSettings`). */
 export interface AppSettings {
   version: number;
@@ -683,6 +698,7 @@ export interface AppSettings {
   generator: GeneratorDefaults;
   defaultCreateOptions: CreateOptions;
   shortcuts: ShortcutBindings;
+  sync: SyncConfig;
 }
 
 /** Recycle-bin / history-retention settings of the open DB (Rust `DbMetaSettings`). */
@@ -823,4 +839,69 @@ export async function writeFileAtomic(
 /** Fetch metadata (size, modified time) for a file. */
 export async function statFile(path: string): Promise<FileMeta> {
   return invoke<FileMeta>("stat_file", { path });
+}
+
+// ── Phase 8: P2P synchronization ──────────────────────────────────────────────
+
+/** A lightweight description of a vault's state (mirrors Rust `VaultFingerprint`). */
+export interface VaultFingerprint {
+  name: string | null;
+  entryCount: number;
+  groupCount: number;
+  /** Most-recent modification time across the vault, epoch millis, or null. */
+  latestModified: number | null;
+  /** Checksum that differs whenever the vault's contents differ. */
+  checksum: string;
+}
+
+/** Encrypted vault bytes + their fingerprint, for transfer (Rust `SyncSnapshot`). */
+export interface SyncSnapshot {
+  /** Encrypted `.kdbx` bytes. */
+  bytes: number[];
+  fingerprint: VaultFingerprint;
+}
+
+/** The result of merging a received snapshot (mirrors Rust `MergeResult`). */
+export interface MergeResult {
+  created: number;
+  updated: number;
+  locationUpdated: number;
+  deleted: number;
+  warnings: string[];
+  /** Whether anything changed (so the UI knows to save). */
+  changed: boolean;
+  /** The vault fingerprint after the merge. */
+  fingerprint: VaultFingerprint;
+}
+
+/** Fingerprint of the open vault, for the pre-transfer metadata exchange. */
+export async function syncFingerprint(): Promise<VaultFingerprint> {
+  return invoke<VaultFingerprint>("sync_fingerprint");
+}
+
+/**
+ * Serialize the open vault to encrypted KDBX bytes + fingerprint, for chunked
+ * transfer over the data channel. Returns the bytes as a `Uint8Array`.
+ */
+export async function syncExportSnapshot(): Promise<{
+  bytes: Uint8Array;
+  fingerprint: VaultFingerprint;
+}> {
+  const snap = await invoke<SyncSnapshot>("sync_export_snapshot");
+  return { bytes: new Uint8Array(snap.bytes), fingerprint: snap.fingerprint };
+}
+
+/**
+ * Merge a received encrypted snapshot into the open vault (newer-wins, history-
+ * preserving). Tries the session key first; `password` is a fallback used when
+ * the peer's vault has a different master password.
+ */
+export async function syncMergeSnapshot(
+  bytes: Uint8Array,
+  password: string | null = null,
+): Promise<MergeResult> {
+  return invoke<MergeResult>("sync_merge_snapshot", {
+    bytes: Array.from(bytes),
+    password,
+  });
 }

@@ -18,14 +18,22 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
+# P2P sync signaling (Phase 8): the WebView2/WebKit WebSocket can hang or be
+# blocked by the app CSP / Windows network stack, so the signaling socket runs
+# natively in Rust via this plugin (tokio-tungstenite under the hood) and is
+# driven from the frontend through its JS API. Only the RTCPeerConnection stays
+# in the WebView.
+tauri-plugin-websocket = "2"
 # System-wide hotkeys for auto-type (PLAN Phase 6: Ctrl+Alt+A / Ctrl+Shift+A).
 # Cross-platform; the actual keystroke injection is Windows-only (see below).
 tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-# KDBX parsing/serialization (Phase 2). `save_kdbx4` enables writing databases.
-keepass = { version = "0.13", features = ["save_kdbx4"] }
+# KDBX parsing/serialization (Phase 2). `save_kdbx4` enables writing databases;
+# `_merge` enables the UUID-based three-way `Database::merge` used by P2P sync
+# (Phase 8) for KeePass-compatible, history-preserving conflict resolution.
+keepass = { version = "0.13", features = ["save_kdbx4", "_merge"] }
 # Re-exported by keepass for Argon2 KDF parameters (KdfConfig::Argon2*.version).
 # The crate is published as `rust-argon2` but exposes the `argon2` module path.
 argon2 = { package = "rust-argon2", version = "3" }

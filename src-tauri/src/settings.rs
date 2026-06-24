@@ -18,6 +18,7 @@ use tauri::{AppHandle, Manager, Runtime};
 
 use crate::crypto::CreateOptions;
 use crate::error::{AppError, AppResult};
+use crate::sync::SyncConfig;
 
 /// Current settings schema version. Bump when fields are added/changed so the
 /// migration path in [`migrate`] has a hook.
@@ -104,6 +105,8 @@ pub struct AppSettings {
     pub default_create_options: CreateOptions,
     /// Customizable in-app keyboard shortcuts.
     pub shortcuts: ShortcutBindings,
+    /// P2P synchronization configuration (signaling URL, ICE servers).
+    pub sync: SyncConfig,
 }
 
 impl Default for AppSettings {
@@ -118,6 +121,7 @@ impl Default for AppSettings {
             generator: GeneratorDefaults::default(),
             default_create_options: CreateOptions::default(),
             shortcuts: ShortcutBindings::default(),
+            sync: SyncConfig::default(),
         }
     }
 }

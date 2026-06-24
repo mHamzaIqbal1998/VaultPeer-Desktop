@@ -25,7 +25,7 @@ import {
 import { captureAccelerator } from "@/lib/shortcuts";
 import { PasswordField } from "./PasswordField";
 
-type Tab = "app" | "database" | "security";
+type Tab = "app" | "database" | "security" | "sync";
 
 interface Props {
   onClose: () => void;
@@ -52,6 +52,7 @@ export function SettingsPanel({ onClose }: Props) {
     { id: "app", label: "Application" },
     { id: "database", label: "Database" },
     { id: "security", label: "Security" },
+    { id: "sync", label: "Sync" },
   ];
 
   return (
@@ -107,6 +108,7 @@ export function SettingsPanel({ onClose }: Props) {
             {tab === "security" && (
               <SecurityTab isUnlocked={isUnlocked} dbPath={metadata?.path ?? null} />
             )}
+            {tab === "sync" && <SyncTab />}
           </div>
         </div>
       </motion.div>
@@ -860,6 +862,136 @@ function SecurityTab({
 
       {status && <p className="text-xs text-status-success">{status}</p>}
       {error && <p className="text-xs text-status-error">{error}</p>}
+    </div>
+  );
+}
+
+// ── Sync tab (PLAN Phase 8 / SYN-01, SYN-07) ──────────────────────────────────
+
+const DEFAULT_STUN = "stun:stun.l.google.com:19302";
+
+function SyncTab() {
+  const sync = useSettingsStore((s) => s.settings.sync);
+  const update = useSettingsStore((s) => s.update);
+
+  const setSignalingUrl = (signalingUrl: string) =>
+    void update({ sync: { ...sync, signalingUrl } });
+
+  const setIce = (iceServers: typeof sync.iceServers) =>
+    void update({ sync: { ...sync, iceServers } });
+
+  const addIce = () =>
+    setIce([...sync.iceServers, { urls: ["stun:"], username: null, credential: null }]);
+
+  const removeIce = (index: number) =>
+    setIce(sync.iceServers.filter((_, i) => i !== index));
+
+  const inputCls =
+    "w-full rounded-lg border border-border-sage bg-background-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent-mint/50";
+
+  return (
+    <div className="space-y-6">
+      <Section title="Signaling server">
+        <p className="text-xs text-text-muted">
+          P2P sync exchanges connection details through a WebSocket signaling
+          server, then transfers the encrypted vault directly between devices.
+          Use the same server URL as your VaultPeer mobile app.
+        </p>
+        <input
+          type="text"
+          value={sync.signalingUrl}
+          placeholder="wss://signal.example.com"
+          spellCheck={false}
+          onChange={(e) => setSignalingUrl(e.target.value)}
+          className={inputCls}
+        />
+      </Section>
+
+      <Section title="ICE servers (STUN / TURN)">
+        <p className="text-xs text-text-muted">
+          STUN servers help peers discover each other across NATs; a TURN server
+          relays traffic when a direct connection isn't possible.
+        </p>
+        <div className="space-y-3">
+          {sync.iceServers.map((server, i) => (
+            <div
+              key={i}
+              className="space-y-2 rounded-lg border border-border-sage bg-background-primary/40 p-3"
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={server.urls.join(", ")}
+                  placeholder="stun:host:port, turn:host:port"
+                  spellCheck={false}
+                  onChange={(e) => {
+                    const urls = e.target.value
+                      .split(",")
+                      .map((u) => u.trim())
+                      .filter(Boolean);
+                    const next = [...sync.iceServers];
+                    next[i] = { ...server, urls };
+                    setIce(next);
+                  }}
+                  className={inputCls}
+                />
+                <button
+                  type="button"
+                  onClick={() => removeIce(i)}
+                  aria-label="Remove server"
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-text-muted transition-colors hover:bg-status-error/10 hover:text-status-error"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={server.username ?? ""}
+                  placeholder="TURN username (optional)"
+                  spellCheck={false}
+                  onChange={(e) => {
+                    const next = [...sync.iceServers];
+                    next[i] = { ...server, username: e.target.value || null };
+                    setIce(next);
+                  }}
+                  className={inputCls}
+                />
+                <input
+                  type="text"
+                  value={server.credential ?? ""}
+                  placeholder="TURN credential (optional)"
+                  spellCheck={false}
+                  onChange={(e) => {
+                    const next = [...sync.iceServers];
+                    next[i] = { ...server, credential: e.target.value || null };
+                    setIce(next);
+                  }}
+                  className={inputCls}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={addIce}
+            className="rounded-lg border border-border-sage bg-surface-elevated px-3 py-1.5 text-sm font-medium text-text-primary transition-colors hover:border-accent-mint/40"
+          >
+            Add server
+          </button>
+          <button
+            type="button"
+            onClick={() => setIce([{ urls: [DEFAULT_STUN], username: null, credential: null }])}
+            className="rounded-lg border border-border-sage px-3 py-1.5 text-sm font-medium text-text-muted transition-colors hover:text-text-secondary"
+          >
+            Reset to default STUN
+          </button>
+        </div>
+      </Section>
     </div>
   );
 }
