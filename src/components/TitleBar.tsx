@@ -4,6 +4,7 @@ import { ClipboardIndicator } from "./ClipboardIndicator";
 import { SyncStatus } from "./SyncStatus";
 import { useSessionStore } from "@/stores/sessionStore";
 import { lockDatabase } from "@/services/tauri";
+import appIcon from "@/assets/app-icon.png";
 
 /**
  * Frameless custom title bar. The center region is marked
@@ -51,18 +52,7 @@ export function TitleBar({
     >
       {/* Brand */}
       <div data-tauri-drag-region className="flex items-center gap-2">
-        <div className="grid h-6 w-6 place-items-center rounded-md bg-accent-mint-dim text-accent-mint">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <path
-              d="M12 2 4 5v6c0 5 3.4 8.4 8 11 4.6-2.6 8-6 8-11V5l-8-3Z"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinejoin="round"
-            />
-            <circle cx="12" cy="10.5" r="2" fill="currentColor" />
-            <path d="M12 12.5v3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          </svg>
-        </div>
+        <img src={appIcon} alt="" aria-hidden width={22} height={22} className="rounded" draggable={false} />
         <span className="text-[13px] font-semibold tracking-wide text-text-primary">
           VaultPeer
         </span>

@@ -12,6 +12,7 @@ import { useVaultStore } from "@/stores/vaultStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { PasswordField } from "./PasswordField";
 import { CreateDatabaseDialog } from "./CreateDatabaseDialog";
+import appIcon from "@/assets/app-icon.png";
 
 /**
  * Phase 2 entry point. Two states share this screen:
@@ -181,23 +182,14 @@ export function UnlockScreen() {
 function Brand() {
   return (
     <div className="mb-7 text-center">
-      <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-accent-mint-dim text-accent-mint">
-        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <path
-            d="M12 2 4 5v6c0 5 3.4 8.4 8 11 4.6-2.6 8-6 8-11V5l-8-3Z"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinejoin="round"
-          />
-          <circle cx="12" cy="10.5" r="2" fill="currentColor" />
-          <path
-            d="M12 12.5v3"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-          />
-        </svg>
-      </div>
+      <img
+        src={appIcon}
+        alt="VaultPeer"
+        width={64}
+        height={64}
+        className="mx-auto mb-4 rounded-2xl"
+        draggable={false}
+      />
       <h1 className="text-2xl font-semibold text-text-primary">VaultPeer</h1>
       <p className="mt-1 text-sm text-text-muted">
         KeePass-compatible password manager
