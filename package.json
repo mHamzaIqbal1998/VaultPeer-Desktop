@@ -9,6 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "icons": "tauri icon src-tauri/icons/source.png",
+    "icons:ico": "python scripts/generate-icon-ico.py",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

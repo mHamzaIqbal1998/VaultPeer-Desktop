@@ -13,6 +13,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+ico = "0.5"
+image = { version = "0.25", default-features = false, features = ["png"] }
+dunce = "1"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
