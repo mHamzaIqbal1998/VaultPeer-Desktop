@@ -27,12 +27,6 @@
     ],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' ws: wss: stun: stuns: turn: turns: http://localhost:1420 ws://localhost:1420; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
-    },
-    "trayIcon": {
-      "id": "main-tray",
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": false,
-      "tooltip": "VaultPeer"
     }
   },
   "bundle": {
