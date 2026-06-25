@@ -10,6 +10,7 @@ mod clipboard;
 mod commands;
 mod crypto;
 mod database;
+mod dpapi;
 mod error;
 mod browser;
 mod export;
@@ -101,6 +102,13 @@ pub fn run() {
         .manage(crate::browser::BrowserServer::default())
         .setup(move |app| {
             tray::create_tray(app.handle())?;
+
+            // Harden config directory permissions (Phase 11 / SEC-02).
+            if let Ok(config_dir) = app.path().app_config_dir() {
+                if let Err(e) = security::ensure_config_dir_security(&config_dir) {
+                    eprintln!("[vaultpeer] warning: could not secure config dir: {e}");
+                }
+            }
 
             // Load persisted settings into the managed state so the close
             // handler and commands can read them without hitting disk (Phase 7).

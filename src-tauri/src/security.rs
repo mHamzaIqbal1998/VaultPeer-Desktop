@@ -1,9 +1,8 @@
-//! Security audit utilities (Phase 10).
+//! Security audit utilities (Phase 10) and config directory hardening (Phase 11).
 //!
 //! Provides compile-time and runtime security checks:
 //! - File permission verification for database files
-//! - Memory protection assertions
-//! - Update mechanism security stubs
+//! - Config directory permission enforcement (Unix 0700, Windows ACL)
 
 use std::path::Path;
 
@@ -40,8 +39,10 @@ pub fn check_file_permissions(path: &str) -> Option<String> {
     None
 }
 
-/// Ensure the settings directory exists with appropriate permissions.
-#[allow(dead_code)]
+/// Ensure the config directory exists with restrictive permissions.
+/// - Unix: `0700` (owner-only read/write/execute).
+/// - Windows: best-effort `icacls` to remove inherited access and grant only the
+///   current user full control. Falls back silently if `icacls` is unavailable.
 pub fn ensure_config_dir_security(dir: &Path) -> Result<(), String> {
     if !dir.exists() {
         std::fs::create_dir_all(dir)
@@ -54,6 +55,22 @@ pub fn ensure_config_dir_security(dir: &Path) -> Result<(), String> {
         let perms = std::fs::Permissions::from_mode(0o700);
         std::fs::set_permissions(dir, perms)
             .map_err(|e| format!("Failed to set directory permissions: {}", e))?;
+    }
+
+    #[cfg(windows)]
+    {
+        let dir_str = dir.to_string_lossy();
+        // Remove inherited ACEs and grant the current user full control.
+        // `icacls` is available on all supported Windows versions (Vista+).
+        // Failures are non-fatal: the directory still exists, just with default ACLs.
+        let username = std::env::var("USERNAME").unwrap_or_default();
+        if !username.is_empty() {
+            let _ = std::process::Command::new("icacls")
+                .args([&*dir_str, "/inheritance:r", "/grant:r", &format!("{username}:(OI)(CI)F")])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
     }
 
     Ok(())

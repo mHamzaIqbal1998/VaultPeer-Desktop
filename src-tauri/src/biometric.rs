@@ -72,9 +72,6 @@ mod imp {
     use windows::Security::Credentials::UI::{
         UserConsentVerificationResult, UserConsentVerifier, UserConsentVerifierAvailability,
     };
-    use windows::Win32::Security::Cryptography::{
-        CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB,
-    };
 
     /// Whether Windows Hello (or a PIN fallback) is configured and available.
     pub fn available() -> bool {
@@ -113,68 +110,38 @@ mod imp {
         }
     }
 
-    /// DPAPI-encrypt `data` for the current user account.
-    fn protect(data: &[u8]) -> AppResult<Vec<u8>> {
-        let mut input = CRYPT_INTEGER_BLOB {
-            cbData: data.len() as u32,
-            pbData: data.as_ptr() as *mut u8,
-        };
-        let mut output = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
-        unsafe {
-            CryptProtectData(&mut input, None, None, None, None, 0, &mut output)
-                .map_err(|e| AppError::Crypto(format!("DPAPI protect failed: {e}")))?;
-            let slice = std::slice::from_raw_parts(output.pbData, output.cbData as usize);
-            let owned = slice.to_vec();
-            // The buffer was allocated by LocalAlloc inside CryptProtectData.
-            let _ = windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
-                output.pbData as *mut core::ffi::c_void,
-            ));
-            Ok(owned)
-        }
-    }
-
-    /// DPAPI-decrypt a blob previously produced by [`protect`].
-    fn unprotect(data: &[u8]) -> AppResult<Vec<u8>> {
-        let mut input = CRYPT_INTEGER_BLOB {
-            cbData: data.len() as u32,
-            pbData: data.as_ptr() as *mut u8,
-        };
-        let mut output = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
-        unsafe {
-            CryptUnprotectData(&mut input, None, None, None, None, 0, &mut output)
-                .map_err(|e| AppError::Crypto(format!("DPAPI unprotect failed: {e}")))?;
-            let slice = std::slice::from_raw_parts(output.pbData, output.cbData as usize);
-            let owned = slice.to_vec();
-            let _ = windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
-                output.pbData as *mut core::ffi::c_void,
-            ));
-            Ok(owned)
-        }
-    }
-
     /// Enroll a database: verify with Hello, then store the DPAPI-protected
-    /// master password.
+    /// master password (with app-scoped entropy via the shared `dpapi` module).
     pub fn enroll<R: Runtime>(app: &AppHandle<R>, db_path: &str, password: &str) -> AppResult<()> {
         verify(app, "Confirm it's you to enable quick unlock for this vault")?;
-        let blob = protect(password.as_bytes())?;
+        let blob = crate::dpapi::protect(password.as_bytes())?;
         let mut store = load_store(app);
         store.entries.insert(db_path.to_string(), blob);
         save_store(app, &store)
     }
 
     /// Unlock a database: verify with Hello, then return the decrypted master
-    /// password for the unlock flow.
+    /// password for the unlock flow. Legacy blobs (without entropy) are
+    /// transparently re-encrypted with entropy on successful unlock.
     pub fn unlock<R: Runtime>(app: &AppHandle<R>, db_path: &str) -> AppResult<String> {
-        let store = load_store(app);
+        let mut store = load_store(app);
         let blob = store
             .entries
             .get(db_path)
             .ok_or_else(|| AppError::NotFound("no quick-unlock credential for this vault".into()))?
             .clone();
         verify(app, "Verify your identity to unlock your vault")?;
-        let bytes = unprotect(&blob)?;
-        String::from_utf8(bytes)
-            .map_err(|_| AppError::Crypto("stored credential was corrupt".into()))
+        let bytes = crate::dpapi::unprotect(&blob)?;
+        let password = String::from_utf8(bytes.clone())
+            .map_err(|_| AppError::Crypto("stored credential was corrupt".into()))?;
+
+        // Re-encrypt with current entropy so legacy blobs are migrated.
+        if let Ok(new_blob) = crate::dpapi::protect(&bytes) {
+            store.entries.insert(db_path.to_string(), new_blob);
+            let _ = save_store(app, &store);
+        }
+
+        Ok(password)
     }
 }
 

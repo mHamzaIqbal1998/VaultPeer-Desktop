@@ -144,14 +144,30 @@ fn suggestions_for(db: &Database, page_url: &str, limit: usize) -> Vec<Suggestio
 
 // ── HTTP server (BRW-02) ──────────────────────────────────────────────────────
 
-/// Per-session browser-integration config, persisted so the native-messaging
-/// host (a separate process) can find the running server's port and token.
-#[derive(Debug, Clone, Serialize, serde::Deserialize, Default)]
+/// In-memory browser-integration config (always holds the plaintext token).
+#[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct IntegrationConfig {
     pub enabled: bool,
     pub port: u16,
     pub token: String,
+}
+
+/// On-disk format for `browser_integration.json`. Supports migration from the
+/// legacy plaintext `token` field to the DPAPI-encrypted `token_protected` field.
+#[derive(Debug, Clone, Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct IntegrationConfigDisk {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    port: u16,
+    /// Legacy plaintext token — read for migration, never written.
+    #[serde(default, skip_serializing)]
+    token: Option<String>,
+    /// DPAPI-encrypted token bytes (with app-scoped entropy).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    token_protected: Option<Vec<u8>>,
 }
 
 /// Running-server handle, stored in the Tauri-managed [`BrowserServer`].
@@ -350,7 +366,8 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Handle one HTTP request: health is open; everything else needs the token.
+/// Handle one HTTP request. Both `/health` and `/suggest` require a valid bearer
+/// token; unauthenticated callers only learn the server exists.
 fn handle_request<R: Runtime>(request: tiny_http::Request, app: &AppHandle<R>, token: &str) {
     let origin = header_value(&request, "Origin");
     let method = request.method().as_str().to_uppercase();
@@ -363,22 +380,30 @@ fn handle_request<R: Runtime>(request: tiny_http::Request, app: &AppHandle<R>, t
     }
 
     let session = app.state::<VaultSession>();
+    let authenticated = header_value(&request, "Authorization").trim()
+        == format!("Bearer {token}");
 
     let response = match path.as_str() {
         "/vaultpeer/health" => {
-            let unlocked = session.is_unlocked();
-            json_response(
-                200,
-                format!(
-                    "{{\"status\":\"ok\",\"app\":\"VaultPeer\",\"unlocked\":{unlocked}}}"
-                ),
-                &origin,
-            )
+            if authenticated {
+                let unlocked = session.is_unlocked();
+                json_response(
+                    200,
+                    format!(
+                        "{{\"status\":\"ok\",\"app\":\"VaultPeer\",\"unlocked\":{unlocked}}}"
+                    ),
+                    &origin,
+                )
+            } else {
+                json_response(
+                    200,
+                    "{\"status\":\"ok\",\"app\":\"VaultPeer\"}".into(),
+                    &origin,
+                )
+            }
         }
         "/vaultpeer/suggest" => {
-            // Bearer-token auth.
-            let auth = header_value(&request, "Authorization");
-            if auth.trim() != format!("Bearer {token}") {
+            if !authenticated {
                 json_response(401, "{\"error\":\"unauthorized\"}".into(), &origin)
             } else {
                 let url = query.get("url").cloned().unwrap_or_default();
@@ -425,21 +450,48 @@ fn integration_config_path() -> AppResult<PathBuf> {
     Ok(config_dir()?.join("browser_integration.json"))
 }
 
-/// Persist the integration config (port + token) atomically.
+/// Persist the integration config (port + token) atomically. The token is
+/// DPAPI-encrypted before writing so it is not stored in plaintext on disk.
 fn write_integration_config(cfg: &IntegrationConfig) -> AppResult<()> {
     let path = integration_config_path()?;
-    let json = serde_json::to_vec_pretty(cfg)
+    let token_protected = if cfg.token.is_empty() {
+        None
+    } else {
+        Some(crate::dpapi::protect_string(&cfg.token)?)
+    };
+    let disk = IntegrationConfigDisk {
+        enabled: cfg.enabled,
+        port: cfg.port,
+        token: None,
+        token_protected,
+    };
+    let json = serde_json::to_vec_pretty(&disk)
         .map_err(|e| AppError::Other(format!("could not serialize browser config: {e}")))?;
     crate::fs_ops::write_file_atomic(&path, &json)
 }
 
 /// Read the integration config, or a disabled default if absent/unreadable.
+/// Transparently migrates from the legacy plaintext `token` field to the
+/// DPAPI-encrypted `token_protected` field.
 fn read_integration_config() -> IntegrationConfig {
-    integration_config_path()
+    let disk: IntegrationConfigDisk = integration_config_path()
         .and_then(|p| Ok(std::fs::read(p)?))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    let token = disk
+        .token_protected
+        .as_deref()
+        .and_then(|blob| crate::dpapi::unprotect_string(blob).ok())
+        .or(disk.token)
+        .unwrap_or_default();
+
+    IntegrationConfig {
+        enabled: disk.enabled,
+        port: disk.port,
+        token,
+    }
 }
 
 /// On startup, check the persisted integration config and restart the server if
@@ -813,6 +865,9 @@ const POPUP_HTML: &str = r#"<!doctype html>
   summary{cursor:pointer;color:#555}
   .row{display:flex;gap:6px}
   .row button{flex:1}
+  .token-row{display:flex;gap:4px;align-items:stretch}
+  .token-row input{flex:1;min-width:0}
+  .token-row button{margin-top:0;padding:4px 8px;font-size:11px;white-space:nowrap}
 </style>
 </head><body>
 <h3>VaultPeer Connector</h3>
@@ -821,7 +876,11 @@ const POPUP_HTML: &str = r#"<!doctype html>
 <details>
   <summary>Connection settings</summary>
   <label>Port</label><input id="port" type="number" value="7796">
-  <label>Token</label><input id="token" type="text" placeholder="paste from VaultPeer → Settings → Browser">
+  <label>Token</label>
+  <div class="token-row">
+    <input id="token" type="password" placeholder="paste from VaultPeer → Settings → Browser">
+    <button id="toggleToken" type="button">Show</button>
+  </div>
   <div class="row">
     <button id="save">Save</button>
     <button id="test">Test connection</button>
@@ -852,7 +911,13 @@ function storageSet(obj) {
   });
 }
 
-// Attach handlers immediately so a storage hiccup can never disable the buttons.
+$("toggleToken").addEventListener("click", () => {
+  const inp = $("token");
+  const show = inp.type === "password";
+  inp.type = show ? "text" : "password";
+  $("toggleToken").textContent = show ? "Hide" : "Show";
+});
+
 $("save").addEventListener("click", async () => {
   await storageSet({ port: Number($("port").value) || 7796, token: $("token").value.trim() });
   setStatus("Saved.");
@@ -861,9 +926,15 @@ $("save").addEventListener("click", async () => {
 $("test").addEventListener("click", async () => {
   setStatus("Testing…");
   try {
-    const res = await fetch(`http://127.0.0.1:${Number($("port").value) || 7796}/vaultpeer/health`);
+    const token = $("token").value.trim();
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const res = await fetch(`http://127.0.0.1:${Number($("port").value) || 7796}/vaultpeer/health`, { headers });
     const j = await res.json();
-    setStatus(j.unlocked ? "Connected — vault unlocked." : "Connected — vault is locked.");
+    if (j.unlocked !== undefined) {
+      setStatus(j.unlocked ? "Connected — vault unlocked." : "Connected — vault is locked.");
+    } else {
+      setStatus("Connected to VaultPeer (add token for full status).");
+    }
   } catch (e) {
     setStatus("Not reachable. Is the connector server enabled in VaultPeer? " + e);
   }
@@ -882,8 +953,6 @@ function hostOf(url) {
   try { return new URL(url).host.replace(/^www\./, ""); } catch (e) { return url; }
 }
 
-// "Fill current page": ask the page's content script to fill from VaultPeer, and
-// show a clear result. This is the reliable, on-demand path.
 $("fill").addEventListener("click", async () => {
   setStatus("Looking up…");
   const tabs = await tabsQueryActive();
@@ -912,7 +981,6 @@ $("fill").addEventListener("click", async () => {
   }
 });
 
-// Prefill saved values (non-blocking).
 storageGet(["port", "token"]).then(({ port, token }) => {
   if (port) $("port").value = port;
   if (token) $("token").value = token;

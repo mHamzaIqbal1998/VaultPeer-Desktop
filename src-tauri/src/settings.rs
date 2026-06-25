@@ -22,7 +22,9 @@ use crate::sync::SyncConfig;
 
 /// Current settings schema version. Bump when fields are added/changed so the
 /// migration path in [`migrate`] has a hook.
-pub const SETTINGS_VERSION: u32 = 1;
+/// v1: initial schema.
+/// v2: TURN credentials are DPAPI-encrypted on disk (Phase 11 / SEC-06).
+pub const SETTINGS_VERSION: u32 = 2;
 
 /// Default password-generator preferences (mirrors the frontend
 /// `GeneratorOptions`). Used to seed the generator tool / entry editor.
@@ -157,6 +159,7 @@ fn migrate(settings: &mut AppSettings) -> bool {
 
 /// Load settings from disk, falling back to defaults when the file is absent or
 /// unreadable/corrupt (a corrupt file should never block the app from starting).
+/// DPAPI-encrypted fields (TURN credentials) are decrypted transparently.
 /// Migrates and rewrites the file when the on-disk schema is older.
 pub fn load<R: Runtime>(app: &AppHandle<R>) -> AppSettings {
     let path = match settings_path(app) {
@@ -165,7 +168,16 @@ pub fn load<R: Runtime>(app: &AppHandle<R>) -> AppSettings {
     };
 
     let mut settings = match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice::<AppSettings>(&bytes).unwrap_or_default(),
+        Ok(bytes) => {
+            // Parse to Value first so we can decrypt DPAPI-protected fields
+            // (TURN credentials) before deserializing to the typed struct.
+            let mut val: serde_json::Value = match serde_json::from_slice(&bytes) {
+                Ok(v) => v,
+                Err(_) => return AppSettings::default(),
+            };
+            crate::dpapi::unprotect_settings_secrets(&mut val);
+            serde_json::from_value(val).unwrap_or_default()
+        }
         Err(_) => AppSettings::default(),
     };
 
@@ -177,9 +189,13 @@ pub fn load<R: Runtime>(app: &AppHandle<R>) -> AppSettings {
 }
 
 /// Serialize settings to the config file atomically (temp file + rename).
+/// Sensitive fields (TURN credentials) are DPAPI-encrypted before writing.
 fn write_to_disk<R: Runtime>(app: &AppHandle<R>, settings: &AppSettings) -> AppResult<()> {
     let path = settings_path(app)?;
-    let json = serde_json::to_vec_pretty(settings)
+    let mut val = serde_json::to_value(settings)
+        .map_err(|e| AppError::Other(format!("could not serialize settings: {e}")))?;
+    crate::dpapi::protect_settings_secrets(&mut val);
+    let json = serde_json::to_vec_pretty(&val)
         .map_err(|e| AppError::Other(format!("could not serialize settings: {e}")))?;
     crate::fs_ops::write_file_atomic(&path, &json)
 }
