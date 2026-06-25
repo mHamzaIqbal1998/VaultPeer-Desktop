@@ -86,12 +86,26 @@ mod imp {
 
     /// Prompt the user for a Windows Hello verification, returning Ok(()) only on
     /// a successful (verified) check.
-    fn verify(message: &str) -> AppResult<()> {
+    ///
+    /// The app window is minimized before the prompt so the system UWP dialog
+    /// (PIN / fingerprint / face) appears in the foreground instead of behind it.
+    fn verify<R: Runtime>(app: &AppHandle<R>, message: &str) -> AppResult<()> {
+        let window = app.get_webview_window("main");
+        if let Some(ref w) = window {
+            let _ = w.minimize();
+        }
+
         let op = UserConsentVerifier::RequestVerificationAsync(&HSTRING::from(message))
             .map_err(|e| AppError::Other(format!("Windows Hello unavailable: {e}")))?;
         let result = op
             .get()
             .map_err(|e| AppError::Other(format!("Windows Hello prompt failed: {e}")))?;
+
+        if let Some(ref w) = window {
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+        }
+
         if result == UserConsentVerificationResult::Verified {
             Ok(())
         } else {
@@ -141,7 +155,7 @@ mod imp {
     /// Enroll a database: verify with Hello, then store the DPAPI-protected
     /// master password.
     pub fn enroll<R: Runtime>(app: &AppHandle<R>, db_path: &str, password: &str) -> AppResult<()> {
-        verify("Confirm it's you to enable quick unlock for this vault")?;
+        verify(app, "Confirm it's you to enable quick unlock for this vault")?;
         let blob = protect(password.as_bytes())?;
         let mut store = load_store(app);
         store.entries.insert(db_path.to_string(), blob);
@@ -157,7 +171,7 @@ mod imp {
             .get(db_path)
             .ok_or_else(|| AppError::NotFound("no quick-unlock credential for this vault".into()))?
             .clone();
-        verify("Verify your identity to unlock your vault")?;
+        verify(app, "Verify your identity to unlock your vault")?;
         let bytes = unprotect(&blob)?;
         String::from_utf8(bytes)
             .map_err(|_| AppError::Crypto("stored credential was corrupt".into()))
