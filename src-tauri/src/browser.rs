@@ -635,8 +635,15 @@ pub fn write_extension_bundle(dir: &str, exe_path: &str) -> AppResult<()> {
         &native_host_manifest(exe_path),
     )?;
     write("README.md", EXTENSION_README)?;
+
+    std::fs::write(root.join("icon-32.png"), ICON_32)?;
+    std::fs::write(root.join("icon-128.png"), ICON_128)?;
+
     Ok(())
 }
+
+static ICON_32: &[u8] = include_bytes!("../icons/32x32.png");
+static ICON_128: &[u8] = include_bytes!("../icons/128x128.png");
 
 /// Build the native-messaging host manifest, pointing the browser at this exe
 /// launched with the host flag.
@@ -723,7 +730,18 @@ const CHROME_MANIFEST: &str = r#"{
   "description": "Suggest VaultPeer credentials for the current page.",
   "permissions": ["activeTab", "storage", "scripting", "nativeMessaging"],
   "host_permissions": ["http://127.0.0.1/*"],
-  "action": { "default_popup": "popup.html", "default_title": "VaultPeer" },
+  "icons": {
+    "32": "icon-32.png",
+    "128": "icon-128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "VaultPeer",
+    "default_icon": {
+      "32": "icon-32.png",
+      "128": "icon-128.png"
+    }
+  },
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     { "matches": ["<all_urls>"], "js": ["content.js"] }
@@ -738,7 +756,18 @@ const FIREFOX_MANIFEST: &str = r#"{
   "description": "Suggest VaultPeer credentials for the current page.",
   "browser_specific_settings": { "gecko": { "id": "vaultpeer@vaultpeer.app" } },
   "permissions": ["activeTab", "storage", "nativeMessaging", "http://127.0.0.1/*"],
-  "browser_action": { "default_popup": "popup.html", "default_title": "VaultPeer" },
+  "icons": {
+    "32": "icon-32.png",
+    "128": "icon-128.png"
+  },
+  "browser_action": {
+    "default_popup": "popup.html",
+    "default_title": "VaultPeer",
+    "default_icon": {
+      "32": "icon-32.png",
+      "128": "icon-128.png"
+    }
+  },
   "background": { "scripts": ["background.js"] },
   "content_scripts": [
     { "matches": ["<all_urls>"], "js": ["content.js"] }
