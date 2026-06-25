@@ -140,17 +140,17 @@ export function MainLayout() {
 
       {/* Three-pane workspace */}
       <div className="flex min-h-0 flex-1">
-        <aside className="w-64 shrink-0 border-r border-border-sage bg-surface-card/40">
+        <aside className="w-64 shrink-0 border-r border-border-sage bg-surface-card/40" aria-label="Group navigation">
           <GroupTree />
         </aside>
 
-        <main className="min-w-0 flex-1">
+        <section className="min-w-0 flex-1" aria-label="Entries">
           <EntryList
             onNewEntry={() =>
               selectedGroupUuid && setEditor({ open: true, entry: null })
             }
           />
-        </main>
+        </section>
 
         {selectedEntryUuid && (
           <EntryDetail

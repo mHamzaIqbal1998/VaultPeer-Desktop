@@ -16,6 +16,15 @@ export default defineConfig(async () => ({
     },
   },
 
+  // Vitest configuration (Phase 10: frontend component tests)
+  test: {
+    globals: true,
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
+    css: false,
+  },
+
   // Vite options tailored for Tauri development.
   // 1. prevent Vite from obscuring Rust errors
   clearScreen: false,

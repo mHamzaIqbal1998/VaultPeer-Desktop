@@ -170,13 +170,14 @@ function AppTab() {
   return (
     <div className="space-y-6">
       <Section title="Appearance">
-        <Row label="Theme" hint="Match the system, or force light/dark.">
+        <Row label="Theme" hint="Match the system, or force light/dark/high contrast.">
           <Segmented
             value={settings.theme}
             options={[
               ["system", "System"],
               ["light", "Light"],
               ["dark", "Dark"],
+              ["high-contrast", "High Contrast"],
             ]}
             onChange={(v) => setTheme(v as ThemePreference)}
           />
@@ -597,7 +598,7 @@ function DatabaseTab({ isUnlocked }: { isUnlocked: boolean }) {
       {status && <p className="text-xs text-status-success">{status}</p>}
       {error && <p className="text-xs text-status-error">{error}</p>}
 
-      <div className="sticky bottom-0 -mx-5 -mb-4 flex justify-end gap-2 border-t border-border-sage bg-surface-card px-5 py-3">
+      <div className="sticky bottom-[-16px] -mx-5 mt-4 flex justify-end gap-2 border-t border-border-sage bg-surface-card px-5 py-3">
         <button
           type="button"
           onClick={handleApply}

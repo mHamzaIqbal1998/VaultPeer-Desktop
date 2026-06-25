@@ -45,6 +45,8 @@ export function TitleBar({
   return (
     <header
       data-tauri-drag-region
+      role="banner"
+      aria-label="Application title bar"
       className="flex h-10 select-none items-center justify-between border-b border-border-sage bg-surface-card pl-3"
     >
       {/* Brand */}
@@ -72,15 +74,15 @@ export function TitleBar({
           type="button"
           onClick={onOpenSearch}
           disabled={!onOpenSearch}
-          className="flex h-7 w-full max-w-md items-center gap-2 rounded-md border border-border-sage bg-background-primary px-3 text-text-muted transition-colors hover:border-accent-mint/40 disabled:cursor-default disabled:opacity-50 disabled:hover:border-border-sage"
+          className="flex h-7 w-full max-w-md items-center gap-2 rounded-md border border-border-sage bg-background-primary px-2.5 text-text-muted transition-colors hover:border-accent-mint/40 disabled:cursor-default disabled:opacity-50 disabled:hover:border-border-sage"
           title="Search (Ctrl+K)"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden className="shrink-0">
             <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
             <path d="m20 20-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
           </svg>
-          <span className="text-xs">Search…</span>
-          <kbd className="ml-auto rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-text-muted">
+          <span className="text-[11px]">Search…</span>
+          <kbd className="ml-auto rounded bg-surface-elevated px-1 py-px text-[9px] leading-tight text-text-muted">
             Ctrl K
           </kbd>
         </button>

@@ -219,6 +219,9 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background-primary text-text-primary">
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
       <TitleBar
         onOpenGenerator={() => setGeneratorOpen(true)}
         onOpenSearch={isUnlocked ? () => setSearchOpen(true) : undefined}
@@ -226,7 +229,7 @@ export default function App() {
         onOpenSync={() => setSyncOpen(true)}
         onOpenImportExport={isUnlocked ? () => setImportExportOpen(true) : undefined}
       />
-      <main className="flex-1 overflow-hidden">
+      <main id="main-content" className="flex-1 overflow-hidden" role="main">
         {isUnlocked ? <MainLayout /> : <UnlockScreen />}
       </main>
       {generatorOpen && <PasswordGenerator onClose={() => setGeneratorOpen(false)} />}

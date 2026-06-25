@@ -39,7 +39,7 @@ export function ConfirmDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-6">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-6" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title">
       <motion.div
         initial={{ opacity: 0, scale: 0.97, y: 8 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -47,7 +47,7 @@ export function ConfirmDialog({
         className="w-full max-w-sm overflow-hidden rounded-2xl border border-border-sage bg-surface-card shadow-2xl"
       >
         <div className="px-5 py-4">
-          <h2 className="text-base font-semibold text-text-primary">{title}</h2>
+          <h2 id="confirm-dialog-title" className="text-base font-semibold text-text-primary">{title}</h2>
           <p className="mt-2 text-sm text-text-secondary">{message}</p>
           {error && (
             <div className="mt-3 rounded-md border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs text-status-error">

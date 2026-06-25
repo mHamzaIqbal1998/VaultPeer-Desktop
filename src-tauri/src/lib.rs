@@ -17,6 +17,7 @@ mod fs_ops;
 mod import;
 mod otp;
 mod search;
+mod security;
 mod session;
 mod settings;
 mod sync;

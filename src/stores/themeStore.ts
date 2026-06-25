@@ -1,8 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type ThemePreference = "dark" | "light" | "system";
-export type ResolvedTheme = "dark" | "light";
+export type ThemePreference = "dark" | "light" | "high-contrast" | "system";
+export type ResolvedTheme = "dark" | "light" | "high-contrast";
 
 interface ThemeState {
   /** The user's chosen preference. */
@@ -21,6 +21,7 @@ function systemPrefersDark(): boolean {
 
 function resolve(pref: ThemePreference): ResolvedTheme {
   if (pref === "system") return systemPrefersDark() ? "dark" : "light";
+  if (pref === "high-contrast") return "high-contrast";
   return pref;
 }
 

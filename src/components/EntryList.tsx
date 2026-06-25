@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { getEntry, type EntrySummary } from "@/services/tauri";
 import {
@@ -10,6 +10,8 @@ import { VaultIcon } from "@/lib/icons";
 import { copyToClipboard } from "@/lib/clipboard";
 import { tagColor } from "@/lib/tags";
 import { DND_ENTRY } from "./GroupTree";
+
+const VIRTUALIZE_THRESHOLD = 200;
 
 interface Props {
   /** Open the editor to create a new entry in the current group. */
@@ -148,36 +150,228 @@ export function EntryList({ onNewEntry }: Props) {
       )}
 
       {/* Entries */}
-      <div className="flex-1 overflow-auto p-5">
+      <div className="flex-1 overflow-auto p-5" role="region" aria-label="Entry list">
         {loading ? (
-          <p className="text-sm text-text-muted">Loading…</p>
+          <p className="text-sm text-text-muted" role="status">Loading…</p>
         ) : sorted.length === 0 ? (
           <EmptyState onNewEntry={onNewEntry} />
         ) : view === "card" ? (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {sorted.map((e) => (
+          <CardGrid
+            entries={sorted}
+            selectedEntryUuid={selectedEntryUuid}
+            onSelect={selectEntry}
+          />
+        ) : (
+          <ListView
+            entries={sorted}
+            selectedEntryUuid={selectedEntryUuid}
+            onSelect={selectEntry}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Card grid with virtualization for databases with 200+ entries.
+ * For smaller lists, renders all cards directly to keep layout simple.
+ */
+function CardGrid({
+  entries,
+  selectedEntryUuid,
+  onSelect,
+}: {
+  entries: EntrySummary[];
+  selectedEntryUuid: string | null;
+  onSelect: (uuid: string) => void;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  if (entries.length < VIRTUALIZE_THRESHOLD) {
+    return (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3" role="list">
+        {entries.map((e) => (
+          <EntryCard
+            key={e.uuid}
+            entry={e}
+            selected={e.uuid === selectedEntryUuid}
+            onSelect={() => onSelect(e.uuid)}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  const CARD_H = 120;
+  const GAP = 12;
+  const cols = 3;
+  const rows = Math.ceil(entries.length / cols);
+  const totalHeight = rows * (CARD_H + GAP) - GAP;
+
+  return (
+    <div ref={parentRef} className="relative" style={{ height: totalHeight }} role="list">
+      <VirtualizedCardRows
+        entries={entries}
+        cols={cols}
+        cardH={CARD_H}
+        gap={GAP}
+        selectedEntryUuid={selectedEntryUuid}
+        onSelect={onSelect}
+        parentRef={parentRef}
+      />
+    </div>
+  );
+}
+
+function VirtualizedCardRows({
+  entries,
+  cols,
+  cardH,
+  gap,
+  selectedEntryUuid,
+  onSelect,
+  parentRef: _parentRef,
+}: {
+  entries: EntrySummary[];
+  cols: number;
+  cardH: number;
+  gap: number;
+  selectedEntryUuid: string | null;
+  onSelect: (uuid: string) => void;
+  parentRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const rows = Math.ceil(entries.length / cols);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewHeight, setViewHeight] = useState(800);
+
+  const scrollRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const scrollParent = node.closest(".overflow-auto");
+    if (!scrollParent) return;
+    const resizeObs = new ResizeObserver(() => setViewHeight(scrollParent.clientHeight));
+    resizeObs.observe(scrollParent);
+    const onScroll = () => setScrollTop(scrollParent.scrollTop);
+    scrollParent.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      resizeObs.disconnect();
+      scrollParent.removeEventListener("scroll", onScroll);
+    };
+  }, []);
+
+  const rowH = cardH + gap;
+  const startRow = Math.max(0, Math.floor(scrollTop / rowH) - 2);
+  const endRow = Math.min(rows, Math.ceil((scrollTop + viewHeight) / rowH) + 2);
+
+  return (
+    <div ref={scrollRef}>
+      {Array.from({ length: endRow - startRow }, (_, ri) => {
+        const rowIdx = startRow + ri;
+        const start = rowIdx * cols;
+        const rowEntries = entries.slice(start, start + cols);
+        return (
+          <div
+            key={rowIdx}
+            className="absolute left-0 right-0 grid grid-cols-3 gap-3"
+            style={{ top: rowIdx * rowH }}
+          >
+            {rowEntries.map((e) => (
               <EntryCard
                 key={e.uuid}
                 entry={e}
                 selected={e.uuid === selectedEntryUuid}
-                onSelect={() => selectEntry(e.uuid)}
+                onSelect={() => onSelect(e.uuid)}
               />
             ))}
           </div>
-        ) : (
-          <div className="overflow-hidden rounded-xl border border-border-sage">
-            {sorted.map((e, i) => (
-              <EntryRow
-                key={e.uuid}
-                entry={e}
-                first={i === 0}
-                selected={e.uuid === selectedEntryUuid}
-                onSelect={() => selectEntry(e.uuid)}
-              />
-            ))}
-          </div>
-        )}
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * List view with virtualization for databases with 200+ entries.
+ */
+function ListView({
+  entries,
+  selectedEntryUuid,
+  onSelect,
+}: {
+  entries: EntrySummary[];
+  selectedEntryUuid: string | null;
+  onSelect: (uuid: string) => void;
+}) {
+  if (entries.length < VIRTUALIZE_THRESHOLD) {
+    return (
+      <div className="overflow-hidden rounded-xl border border-border-sage" role="list">
+        {entries.map((e, i) => (
+          <EntryRow
+            key={e.uuid}
+            entry={e}
+            first={i === 0}
+            selected={e.uuid === selectedEntryUuid}
+            onSelect={() => onSelect(e.uuid)}
+          />
+        ))}
       </div>
+    );
+  }
+
+  return <VirtualizedListView entries={entries} selectedEntryUuid={selectedEntryUuid} onSelect={onSelect} />;
+}
+
+function VirtualizedListView({
+  entries,
+  selectedEntryUuid,
+  onSelect,
+}: {
+  entries: EntrySummary[];
+  selectedEntryUuid: string | null;
+  onSelect: (uuid: string) => void;
+}) {
+  const ROW_H = 44;
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewHeight, setViewHeight] = useState(800);
+
+  const scrollRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const scrollParent = node.closest(".overflow-auto");
+    if (!scrollParent) return;
+    const resizeObs = new ResizeObserver(() => setViewHeight(scrollParent.clientHeight));
+    resizeObs.observe(scrollParent);
+    const onScroll = () => setScrollTop(scrollParent.scrollTop);
+    scrollParent.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      resizeObs.disconnect();
+      scrollParent.removeEventListener("scroll", onScroll);
+    };
+  }, []);
+
+  const totalHeight = entries.length * ROW_H;
+  const startIdx = Math.max(0, Math.floor(scrollTop / ROW_H) - 5);
+  const endIdx = Math.min(entries.length, Math.ceil((scrollTop + viewHeight) / ROW_H) + 5);
+
+  return (
+    <div
+      ref={scrollRef}
+      className="relative overflow-hidden rounded-xl border border-border-sage"
+      style={{ height: totalHeight }}
+      role="list"
+    >
+      {entries.slice(startIdx, endIdx).map((e, i) => {
+        const idx = startIdx + i;
+        return (
+          <div key={e.uuid} className="absolute left-0 right-0" style={{ top: idx * ROW_H, height: ROW_H }}>
+            <EntryRow
+              entry={e}
+              first={idx === 0}
+              selected={e.uuid === selectedEntryUuid}
+              onSelect={() => onSelect(e.uuid)}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -215,10 +409,15 @@ function EntryCard({
     <motion.div
       layout
       draggable
+      role="listitem"
+      aria-selected={selected}
+      aria-label={entry.title || "Untitled entry"}
       onDragStart={(e) => {
         (e as unknown as React.DragEvent).dataTransfer.setData(DND_ENTRY, entry.uuid);
       }}
       onClick={onSelect}
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }}
       className={`group cursor-pointer rounded-xl border bg-surface-card p-3.5 transition-colors ${
         selected ? "border-accent-mint" : "border-border-sage hover:border-accent-mint/40"
       }`}
@@ -320,6 +519,11 @@ function EntryRow({
   return (
     <div
       draggable
+      role="listitem"
+      aria-selected={selected}
+      aria-label={entry.title || "Untitled entry"}
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }}
       onDragStart={(e) => e.dataTransfer.setData(DND_ENTRY, entry.uuid)}
       onClick={onSelect}
       className={`flex cursor-pointer items-center gap-3 px-3.5 py-2.5 transition-colors ${

@@ -728,7 +728,7 @@ export interface SyncConfig {
 /** All persisted application settings (mirrors Rust `AppSettings`). */
 export interface AppSettings {
   version: number;
-  theme: "dark" | "light" | "system";
+  theme: "dark" | "light" | "high-contrast" | "system";
   /** Inactivity seconds before auto-lock; 0 disables. */
   autoLockSeconds: number;
   /** Seconds before a copied secret is cleared; 0 disables. */

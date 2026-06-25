@@ -71,7 +71,7 @@ export function GroupTree() {
     const trashed = !node.isRecycleBin && isInRecycleBin(tree, node.uuid);
 
     return (
-      <div key={node.uuid}>
+      <div key={node.uuid} role="treeitem" aria-expanded={hasChildren ? !isCollapsed : undefined} aria-selected={selected} aria-label={isRoot ? node.name || "Database" : node.name || "Unnamed"}>
         <div
           className={`group/row flex items-center gap-1 rounded-md pr-1 transition-colors ${
             selected ? "bg-accent-mint-dim" : "hover:bg-surface-elevated"
@@ -185,16 +185,16 @@ export function GroupTree() {
         </div>
 
         {hasChildren && !isCollapsed && (
-          <div>{node.children.map((child) => renderNode(child, depth + 1))}</div>
+          <div role="group">{node.children.map((child) => renderNode(child, depth + 1))}</div>
         )}
       </div>
     );
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <nav className="flex h-full flex-col" aria-label="Group tree">
       <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+        <span className="text-xs font-semibold uppercase tracking-wide text-text-muted" id="group-tree-label">
           Groups
         </span>
         <button
@@ -209,7 +209,7 @@ export function GroupTree() {
           </svg>
         </button>
       </div>
-      <div className="flex-1 overflow-auto px-2 pb-3">{renderNode(tree.root, 0)}</div>
+      <div className="flex-1 overflow-auto px-2 pb-3" role="tree" aria-labelledby="group-tree-label">{renderNode(tree.root, 0)}</div>
 
       {dialog?.kind === "create" && (
         <PromptDialog
@@ -286,7 +286,7 @@ export function GroupTree() {
           onCancel={() => setDialog(null)}
         />
       )}
-    </div>
+    </nav>
   );
 }
 
