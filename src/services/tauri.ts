@@ -51,9 +51,13 @@ export interface CreateOptions {
   compression: "gzip" | "none";
 }
 
-/** Sensible defaults targeting a roughly one-second unlock. */
+/**
+ * Sensible defaults targeting a roughly one-second unlock. Argon2d + AES-256 is
+ * the cross-compatible format every VaultPeer node (desktop, mobile, storage
+ * node) can read, so it's the default for new databases.
+ */
 export const DEFAULT_CREATE_OPTIONS: CreateOptions = {
-  kdf: "argon2id",
+  kdf: "argon2d",
   cipher: "aes256",
   kdfMemoryMib: 64,
   kdfIterations: 10,
@@ -159,12 +163,44 @@ export async function saveAttachmentDialog(
  * Returns the chosen absolute path, or null if cancelled (PLAN Phase 7).
  */
 export async function saveExportDialog(
-  format: "csv" | "xml",
+  format: "csv" | "xml" | "json",
 ): Promise<string | null> {
   const path = await save({
-    title: "Emergency Export (unencrypted)",
+    title: "Export (unencrypted)",
     defaultPath: `vaultpeer-export.${format}`,
     filters: [{ name: format.toUpperCase(), extensions: [format] }],
+  });
+  return path ?? null;
+}
+
+/** Open a native file-open dialog filtered to CSV files (for import). */
+export async function openCsvDialog(): Promise<string | null> {
+  const selected = await open({
+    multiple: false,
+    directory: false,
+    title: "Import from CSV",
+    filters: [
+      { name: "CSV", extensions: ["csv"] },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+/** Open a native directory-picker (used to write the browser extension bundle). */
+export async function openDirectoryDialog(title: string): Promise<string | null> {
+  const selected = await open({ multiple: false, directory: true, title });
+  return typeof selected === "string" ? selected : null;
+}
+
+/** Open a native save dialog for exporting an encrypted `.kdbx` copy. */
+export async function saveKdbxDialog(
+  defaultName = "vaultpeer-export.kdbx",
+): Promise<string | null> {
+  const path = await save({
+    title: "Export as KeePass Database",
+    defaultPath: defaultName,
+    filters: [{ name: "KeePass Database", extensions: ["kdbx"] }],
   });
   return path ?? null;
 }
@@ -782,8 +818,8 @@ export async function dbMaintenance(): Promise<MaintenanceReport> {
   return invoke<MaintenanceReport>("db_maintenance");
 }
 
-/** Produce an unencrypted CSV/XML export of the open database (PRD UN-06). */
-export async function exportDatabase(format: "csv" | "xml"): Promise<string> {
+/** Produce an unencrypted CSV/XML/JSON export of the open database (PRD UN-06 / EXP-02). */
+export async function exportDatabase(format: "csv" | "xml" | "json"): Promise<string> {
   return invoke<string>("export_database", { format });
 }
 
@@ -923,4 +959,159 @@ export async function syncMergeSnapshot(
     bytes: Array.from(bytes),
     password,
   });
+}
+
+// ── Phase 9: import / export & browser integration ────────────────────────────
+
+/** Which CSV column index feeds each entry field (mirrors Rust `ColumnMapping`). */
+export interface ColumnMapping {
+  title: number | null;
+  username: number | null;
+  password: number | null;
+  url: number | null;
+  notes: number | null;
+  otp: number | null;
+  tags: number | null;
+}
+
+/** One importable entry resolved from a CSV row (mirrors Rust `ImportCandidate`). */
+export interface ImportCandidate {
+  title: string;
+  username: string;
+  password: string;
+  url: string;
+  notes: string;
+  otp: string;
+  tags: string[];
+  /** True if an existing entry has the same title + username + URL. */
+  duplicate: boolean;
+}
+
+/** Analysis of a CSV file against the open database (mirrors Rust `CsvPreview`). */
+export interface CsvPreview {
+  format: string;
+  headers: string[];
+  mapping: ColumnMapping;
+  candidates: ImportCandidate[];
+  total: number;
+  duplicateCount: number;
+}
+
+/** Outcome of committing an import (mirrors Rust `ImportReport`). */
+export interface ImportReport {
+  imported: number;
+  skipped: number;
+}
+
+/** The editable entry-field keys, used to render the mapping UI. */
+export const MAPPING_FIELDS: { key: keyof ColumnMapping; label: string }[] = [
+  { key: "title", label: "Title" },
+  { key: "username", label: "Username" },
+  { key: "password", label: "Password" },
+  { key: "url", label: "URL" },
+  { key: "notes", label: "Notes" },
+  { key: "otp", label: "OTP / TOTP" },
+  { key: "tags", label: "Tags" },
+];
+
+/**
+ * Analyse CSV text against the open database: detect format, suggest a column
+ * mapping, and flag duplicate rows. Pass `mapping` to reflect user adjustments.
+ */
+export async function importCsvPreview(
+  text: string,
+  mapping: ColumnMapping | null = null,
+): Promise<CsvPreview> {
+  return invoke<CsvPreview>("import_csv_preview", { text, mapping });
+}
+
+/** Import CSV rows into a group under the given mapping (optionally skipping dups). */
+export async function importCsvApply(
+  text: string,
+  mapping: ColumnMapping,
+  groupUuid: string,
+  skipDuplicates: boolean,
+): Promise<ImportReport> {
+  return invoke<ImportReport>("import_csv_apply", {
+    text,
+    mapping,
+    groupUuid,
+    skipDuplicates,
+  });
+}
+
+/** Preview a KDBX import (merge) without mutating the open vault. */
+export async function importKdbxPreview(
+  bytes: Uint8Array,
+  password: string | null,
+  keyFile: string | null,
+): Promise<MergeResult> {
+  return invoke<MergeResult>("import_kdbx_preview", {
+    bytes: Array.from(bytes),
+    password,
+    keyFile,
+  });
+}
+
+/** Import a KDBX file by merging it into the open vault. */
+export async function importKdbxApply(
+  bytes: Uint8Array,
+  password: string | null,
+  keyFile: string | null,
+): Promise<MergeResult> {
+  return invoke<MergeResult>("import_kdbx_apply", {
+    bytes: Array.from(bytes),
+    password,
+    keyFile,
+  });
+}
+
+/** Export the open vault to a fresh `.kdbx` with the chosen settings/password. */
+export async function exportKdbx(
+  path: string,
+  options: CreateOptions,
+  password: string | null,
+  keyFile: string | null,
+): Promise<void> {
+  await invoke("export_kdbx", { path, options, password, keyFile });
+}
+
+/** Rank vault entries whose URL matches a page URL (BRW-03; no secrets returned). */
+export async function matchUrl(url: string, limit = 10): Promise<EntrySummary[]> {
+  return invoke<EntrySummary[]>("match_url", { url, limit });
+}
+
+/** Status of the localhost browser-integration HTTP server (mirrors `ServerStatus`). */
+export interface BrowserServerStatus {
+  running: boolean;
+  port: number;
+  token: string;
+}
+
+/** Read the browser-integration server status. */
+export async function browserServerStatus(): Promise<BrowserServerStatus> {
+  return invoke<BrowserServerStatus>("browser_server_status");
+}
+
+/** Start the localhost browser-integration server (token auto-generated if omitted). */
+export async function browserServerStart(
+  port: number | null = null,
+  token: string | null = null,
+): Promise<BrowserServerStatus> {
+  return invoke<BrowserServerStatus>("browser_server_start", { port, token });
+}
+
+/** Stop the browser-integration server. */
+export async function browserServerStop(): Promise<void> {
+  await invoke("browser_server_stop");
+}
+
+/** Write a ready-to-load browser extension + native-host manifest into `dir`. */
+export async function exportBrowserExtension(dir: string): Promise<void> {
+  await invoke("export_browser_extension", { dir });
+}
+
+/** Register the native-messaging host manifest (Windows-only; errors elsewhere). */
+export async function registerNativeHost(manifestPath: string): Promise<void> {
+  await invoke("register_native_host", { manifestPath });
 }

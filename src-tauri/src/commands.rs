@@ -9,6 +9,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::autotype::{self, AutoTypeTarget, TypeFields};
+use crate::browser::{self, BrowserServer, ServerStatus};
 use crate::crypto::{self, CreateOptions, DatabaseMetadata};
 use crate::database::{
     self, AttachmentMeta, DatabaseTree, DbMetaSettings, EntryDetail, EntryInput, EntrySummary,
@@ -16,6 +17,7 @@ use crate::database::{
 };
 use crate::error::{AppError, AppResult};
 use crate::fs_ops::{self, FileMeta};
+use crate::import::{self, ColumnMapping, CsvPreview, ImportReport};
 use crate::otp::{self, TotpCode};
 use crate::search::{self, SearchFilters, SearchHit};
 use crate::session::{OpenVault, VaultSession};
@@ -797,6 +799,7 @@ pub fn export_database(format: String, session: State<'_, VaultSession>) -> AppR
     with_db(&session, |db| match format.to_lowercase().as_str() {
         "xml" => Ok(crate::export::to_xml(db)),
         "csv" => Ok(crate::export::to_csv(db)),
+        "json" => crate::export::to_json(db),
         other => Err(AppError::InvalidOperation(format!(
             "unsupported export format: {other}"
         ))),
@@ -920,4 +923,173 @@ pub async fn sync_merge_snapshot(
         }
     }
     Ok(result)
+}
+
+// ── Phase 9: import / export & browser integration ────────────────────────────
+
+/// Analyse CSV text against the open database: detect the source format, suggest
+/// a column mapping, and flag rows that duplicate existing entries (IMP-01). When
+/// `mapping` is provided the preview reflects the user's adjustments instead.
+#[tauri::command]
+pub fn import_csv_preview(
+    text: String,
+    mapping: Option<ColumnMapping>,
+    session: State<'_, VaultSession>,
+) -> AppResult<CsvPreview> {
+    with_db(&session, |db| import::preview_csv(db, &text, mapping))
+}
+
+/// Import CSV rows into a group under the given mapping; optionally skipping
+/// duplicates. The frontend marks the session dirty and saves to persist.
+#[tauri::command]
+pub fn import_csv_apply(
+    text: String,
+    mapping: ColumnMapping,
+    group_uuid: String,
+    skip_duplicates: bool,
+    session: State<'_, VaultSession>,
+) -> AppResult<ImportReport> {
+    with_db_mut(&session, |db| {
+        import::import_csv(db, &text, &mapping, &group_uuid, skip_duplicates)
+    })
+}
+
+/// Preview a KDBX import (merge) without mutating the open vault — reports how
+/// many entries/groups would be created/updated (IMP-02 + preview). Heavy
+/// (decryption) so it runs off the UI thread.
+#[tauri::command]
+pub async fn import_kdbx_preview(
+    bytes: Vec<u8>,
+    password: Option<String>,
+    key_file: Option<String>,
+    session: State<'_, VaultSession>,
+) -> AppResult<MergeResult> {
+    let db = {
+        let guard = session.0.lock().expect("vault session mutex poisoned");
+        guard.as_ref().ok_or(AppError::NoOpenDatabase)?.db.clone()
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        import::preview_kdbx(&db, &bytes, password.as_deref(), key_file.as_deref())
+    })
+    .await
+    .map_err(join_err)?
+}
+
+/// Import a KDBX file by merging it into the open vault (IMP-02). The merged
+/// database is written back into the session; the frontend saves to persist.
+#[tauri::command]
+pub async fn import_kdbx_apply(
+    bytes: Vec<u8>,
+    password: Option<String>,
+    key_file: Option<String>,
+    session: State<'_, VaultSession>,
+) -> AppResult<MergeResult> {
+    let mut db = {
+        let guard = session.0.lock().expect("vault session mutex poisoned");
+        guard.as_ref().ok_or(AppError::NoOpenDatabase)?.db.clone()
+    };
+    let (db, result) = tauri::async_runtime::spawn_blocking(move || {
+        let result = import::import_kdbx(&mut db, &bytes, password.as_deref(), key_file.as_deref())?;
+        Ok::<_, AppError>((db, result))
+    })
+    .await
+    .map_err(join_err)??;
+
+    {
+        let mut guard = session.0.lock().expect("vault session mutex poisoned");
+        match guard.as_mut() {
+            Some(vault) => vault.db = db,
+            None => return Err(AppError::NoOpenDatabase),
+        }
+    }
+    Ok(result)
+}
+
+/// Export the open vault to a fresh `.kdbx` at `path` under the chosen encryption
+/// settings and (possibly different) master password / key file (EXP / KDBX
+/// export with different encryption settings). Heavy → off the UI thread.
+#[tauri::command]
+pub async fn export_kdbx(
+    path: String,
+    options: CreateOptions,
+    password: Option<String>,
+    key_file: Option<String>,
+    session: State<'_, VaultSession>,
+) -> AppResult<()> {
+    let db = {
+        let guard = session.0.lock().expect("vault session mutex poisoned");
+        guard.as_ref().ok_or(AppError::NoOpenDatabase)?.db.clone()
+    };
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        crate::export::export_kdbx(&db, &options, password.as_deref(), key_file.as_deref())
+    })
+    .await
+    .map_err(join_err)??;
+
+    fs_ops::write_file_atomic(Path::new(&path), &bytes)
+}
+
+/// Rank vault entries whose URL matches a page URL, for in-app credential
+/// suggestions (BRW-03). Returns lightweight summaries (no secrets).
+#[tauri::command]
+pub fn match_url(
+    url: String,
+    limit: usize,
+    session: State<'_, VaultSession>,
+) -> AppResult<Vec<EntrySummary>> {
+    with_db(&session, |db| {
+        Ok(browser::matching_entry_ids(db, &url)
+            .into_iter()
+            .take(limit)
+            .filter_map(|id| db.entry(id).map(|e| database::entry_summary(&e, e.parent().id())))
+            .collect())
+    })
+}
+
+/// Current status of the localhost browser-integration HTTP server (BRW-02).
+#[tauri::command]
+pub fn browser_server_status(server: State<'_, BrowserServer>) -> ServerStatus {
+    server.status()
+}
+
+/// Start the localhost browser-integration server. A token is generated when one
+/// isn't supplied; the default port is 7796 (BRW-02). Bound to `127.0.0.1` only.
+#[tauri::command]
+pub fn browser_server_start(
+    app: AppHandle,
+    server: State<'_, BrowserServer>,
+    port: Option<u16>,
+    token: Option<String>,
+) -> AppResult<ServerStatus> {
+    let token = token.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| {
+        format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        )
+    });
+    server.start(&app, port.unwrap_or(7796), token)
+}
+
+/// Stop the browser-integration server (BRW-02).
+#[tauri::command]
+pub fn browser_server_stop(app: AppHandle, server: State<'_, BrowserServer>) {
+    server.stop(&app);
+}
+
+/// Write a ready-to-load browser extension + native-messaging host manifest into
+/// `dir` (BRW-01 / browser extension manifest). Uses this executable's path in
+/// the native-host manifest.
+#[tauri::command]
+pub fn export_browser_extension(dir: String) -> AppResult<()> {
+    let exe = std::env::current_exe()
+        .map_err(|e| AppError::Other(format!("could not resolve executable path: {e}")))?;
+    browser::write_extension_bundle(&dir, &exe.to_string_lossy())
+}
+
+/// Register the native-messaging host manifest so Chrome/Edge can launch the
+/// host (Windows-only; errors elsewhere with guidance) (BRW-01).
+#[tauri::command]
+pub fn register_native_host(manifest_path: String) -> AppResult<()> {
+    browser::register_native_host(&manifest_path)
 }

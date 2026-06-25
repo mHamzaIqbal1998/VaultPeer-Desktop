@@ -6,9 +6,12 @@
 //! document. Entries living in the recycle bin are skipped so trashed
 //! credentials aren't resurrected into a plaintext file.
 
-use keepass::{db::fields, Database};
+use keepass::{db::fields, Database, DatabaseKey};
+use serde::Serialize;
 
+use crate::crypto::{self, CreateOptions};
 use crate::database::{group_name_and_path, is_in_recycle_bin};
+use crate::error::AppResult;
 
 /// One exported row, already resolved to plain strings.
 struct Row {
@@ -98,6 +101,102 @@ pub fn to_xml(db: &Database) -> String {
     out
 }
 
+// ── JSON export (PLAN Phase 9 / EXP-02) ───────────────────────────────────────
+
+/// One custom (non-standard) field on an entry in the JSON export.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonCustomField {
+    key: String,
+    value: String,
+    protected: bool,
+}
+
+/// One entry in the JSON export, including its group path and custom fields.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonEntry {
+    group: String,
+    title: String,
+    username: String,
+    password: String,
+    url: String,
+    notes: String,
+    otp: String,
+    tags: Vec<String>,
+    custom_fields: Vec<JsonCustomField>,
+}
+
+/// The top-level JSON export document.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonExport {
+    generator: String,
+    database: Option<String>,
+    entry_count: usize,
+    entries: Vec<JsonEntry>,
+}
+
+/// Render the database as a structured JSON document (entries with group path,
+/// tags, and custom fields). Recycle-bin entries are excluded, like CSV/XML.
+pub fn to_json(db: &Database) -> AppResult<String> {
+    let entries: Vec<JsonEntry> = db
+        .iter_all_entries()
+        .filter(|e| !is_in_recycle_bin(db, e.parent().id()))
+        .map(|e| {
+            let (_name, path) = group_name_and_path(db, e.parent().id());
+            let custom_fields = e
+                .fields
+                .iter()
+                .filter(|(k, _)| !fields::KNOWN_FIELDS.contains(&k.as_str()) && *k != fields::OTP)
+                .map(|(k, v)| JsonCustomField {
+                    key: k.clone(),
+                    value: v.as_str().to_string(),
+                    protected: v.is_protected(),
+                })
+                .collect();
+            JsonEntry {
+                group: path,
+                title: e.get(fields::TITLE).unwrap_or_default().to_string(),
+                username: e.get(fields::USERNAME).unwrap_or_default().to_string(),
+                password: e.get(fields::PASSWORD).unwrap_or_default().to_string(),
+                url: e.get(fields::URL).unwrap_or_default().to_string(),
+                notes: e.get(fields::NOTES).unwrap_or_default().to_string(),
+                otp: e.get(fields::OTP).unwrap_or_default().to_string(),
+                tags: e.tags.clone(),
+                custom_fields,
+            }
+        })
+        .collect();
+
+    let doc = JsonExport {
+        generator: "VaultPeerDesktop".to_string(),
+        database: db.meta.database_name.clone(),
+        entry_count: entries.len(),
+        entries,
+    };
+    serde_json::to_string_pretty(&doc)
+        .map_err(|e| crate::error::AppError::Other(format!("JSON export failed: {e}")))
+}
+
+// ── KDBX export with custom encryption (PLAN Phase 9 / EXP / IMP-02 round-trip) ─
+
+/// Serialize the database to a fresh `.kdbx` using the supplied encryption
+/// settings and a (possibly different) master password / key file. Used to
+/// export a copy under different encryption — e.g. a stronger KDF, or a separate
+/// password for sharing. The live on-disk vault is untouched.
+pub fn export_kdbx(
+    db: &Database,
+    options: &CreateOptions,
+    password: Option<&str>,
+    key_file: Option<&str>,
+) -> AppResult<Vec<u8>> {
+    let mut export_db = db.clone();
+    crypto::apply_create_options(&mut export_db, options);
+    let key: DatabaseKey = crypto::build_key(password, key_file)?;
+    crypto::serialize_database(&export_db, key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,5 +247,42 @@ mod tests {
         let csv = to_csv(&db);
         // Header only — the trashed entry must not appear.
         assert_eq!(csv.lines().count(), 1);
+    }
+
+    #[test]
+    fn json_export_is_valid_and_complete() {
+        let json = to_json(&db_with_entry()).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["entryCount"], 1);
+        let entry = &value["entries"][0];
+        assert_eq!(entry["title"], "Acme, Inc");
+        assert_eq!(entry["password"], "p@ss\"word");
+        assert!(entry["group"].as_str().unwrap().ends_with("Work"));
+    }
+
+    #[test]
+    fn kdbx_export_reopens_with_new_password_and_settings() {
+        let db = db_with_entry();
+        let opts = CreateOptions {
+            kdf: "argon2d".into(),
+            cipher: "chacha20".into(),
+            kdf_memory_mib: 8,
+            kdf_iterations: 1,
+            kdf_parallelism: 1,
+            aes_rounds: 1000,
+            compression: "gzip".into(),
+        };
+        let bytes = export_kdbx(&db, &opts, Some("export-pw"), None).unwrap();
+        // Reopens only with the new password, and carries the entry across.
+        let reopened = keepass::Database::open(
+            &mut std::io::Cursor::new(&bytes),
+            crypto::build_key(Some("export-pw"), None).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reopened.num_entries(), 1);
+        assert!(matches!(
+            reopened.config.outer_cipher_config,
+            keepass::config::OuterCipherConfig::ChaCha20
+        ));
     }
 }

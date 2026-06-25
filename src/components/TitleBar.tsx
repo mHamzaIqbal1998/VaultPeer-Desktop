@@ -19,9 +19,17 @@ interface TitleBarProps {
   onOpenSettings?: () => void;
   /** Open the P2P sync panel (PLAN Phase 8). */
   onOpenSync?: () => void;
+  /** Open the import/export panel (PLAN Phase 9); undefined when locked. */
+  onOpenImportExport?: () => void;
 }
 
-export function TitleBar({ onOpenGenerator, onOpenSearch, onOpenSettings, onOpenSync }: TitleBarProps) {
+export function TitleBar({
+  onOpenGenerator,
+  onOpenSearch,
+  onOpenSettings,
+  onOpenSync,
+  onOpenImportExport,
+}: TitleBarProps) {
   const metadata = useSessionStore((s) => s.metadata);
   const setLocked = useSessionStore((s) => s.setLocked);
   const isUnlocked = metadata !== null;
@@ -90,6 +98,16 @@ export function TitleBar({ onOpenGenerator, onOpenSearch, onOpenSettings, onOpen
             </svg>
           </ActionButton>
           <SyncStatus onOpen={onOpenSync} />
+          <ActionButton
+            label="Import / Export"
+            disabled={!onOpenImportExport}
+            onClick={onOpenImportExport}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path d="M12 3v10m0 0 3.5-3.5M12 13 8.5 9.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </ActionButton>
           <ActionButton label="Lock database (Ctrl+L)" disabled={!isUnlocked} onClick={handleLock}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
               <rect x="5" y="10" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="2" />

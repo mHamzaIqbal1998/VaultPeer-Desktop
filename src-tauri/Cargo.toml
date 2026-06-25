@@ -47,6 +47,11 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 hmac = "0.12"
 sha1 = "0.10"
 sha2 = "0.10"
+# Browser integration (Phase 9 / BRW-02): a tiny synchronous HTTP server bound to
+# localhost only, letting a browser extension request credential suggestions for
+# the current page. Minimal footprint (no async runtime), in keeping with the
+# single-small-binary goal; the server is opt-in and token-gated.
+tiny_http = "0.12"
 
 # Windows-native integration for Phase 6: auto-type keystroke injection +
 # foreground window-title matching (ATY), and a protected clipboard that

@@ -8,6 +8,7 @@ import { PasswordGenerator } from "@/components/PasswordGenerator";
 import { SearchModal } from "@/components/SearchModal";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { SyncPanel } from "@/components/SyncPanel";
+import { ImportExportPanel } from "@/components/ImportExportPanel";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useSyncStore } from "@/stores/syncStore";
@@ -63,6 +64,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
+  const [importExportOpen, setImportExportOpen] = useState(false);
   const [autoTypePick, setAutoTypePick] = useState<AutoTypePick>({
     open: false,
     windowTitle: "",
@@ -222,12 +224,16 @@ export default function App() {
         onOpenSearch={isUnlocked ? () => setSearchOpen(true) : undefined}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenSync={() => setSyncOpen(true)}
+        onOpenImportExport={isUnlocked ? () => setImportExportOpen(true) : undefined}
       />
       <main className="flex-1 overflow-hidden">
         {isUnlocked ? <MainLayout /> : <UnlockScreen />}
       </main>
       {generatorOpen && <PasswordGenerator onClose={() => setGeneratorOpen(false)} />}
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+      {importExportOpen && isUnlocked && (
+        <ImportExportPanel onClose={() => setImportExportOpen(false)} />
+      )}
       {syncOpen && (
         <SyncPanel
           onClose={() => setSyncOpen(false)}

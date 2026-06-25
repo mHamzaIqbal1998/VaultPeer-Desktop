@@ -287,6 +287,13 @@ export function CreateDatabaseDialog({ onClose, onCreated }: Props) {
                     ["none", "None"],
                   ]}
                 />
+                {(options.kdf === "aes" || options.cipher === "twofish") && (
+                  <p className="text-[11px] text-status-warning">
+                    ⚠ AES-KDF and Twofish can't be opened by VaultPeer mobile or
+                    other KeePass apps. For cross-device sync, use Argon2d (or
+                    Argon2id) with AES-256 or ChaCha20.
+                  </p>
+                )}
               </div>
             )}
           </div>

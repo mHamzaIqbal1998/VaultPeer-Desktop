@@ -227,10 +227,11 @@ pub fn export_snapshot(db: &Database, key: DatabaseKey) -> AppResult<SyncSnapsho
             version,
         },
         // AES-KDF (or any other variant) → Argon2d with ~1s-unlock defaults
-        // (64 MiB, 10 passes, parallelism 4).
+        // (64 MiB, 10 passes, parallelism 4). keepass-rs stores Argon2 `M` in
+        // bytes, so 64 MiB = 64 * 1024 * 1024.
         _ => KdfConfig::Argon2 {
             iterations: 10,
-            memory: 64 * 1024,
+            memory: 64 * 1024 * 1024,
             parallelism: 4,
             version: argon2::Version::Version13,
         },
@@ -315,12 +316,23 @@ pub fn merge_snapshot(
     bytes: &[u8],
     password: Option<&str>,
 ) -> AppResult<MergeResult> {
+    let remote = open_remote(bytes, session_key, password)?;
+    merge_database(local, remote)
+}
+
+/// Merge an already-decrypted `remote` database into `local`, resolving conflicts
+/// via the KeePass merge algorithm (newer-modification-wins, history-preserving)
+/// with the same incoming-wins tie-breaking as [`merge_snapshot`]. Shared by P2P
+/// sync and KDBX import (PLAN Phase 9: "KDBX import — merge into existing").
+///
+/// `local` is only mutated once a clean merge is produced, so a failure leaves it
+/// untouched.
+pub fn merge_database(local: &mut Database, mut remote: Database) -> AppResult<MergeResult> {
     use keepass::db::merge::{MergeError, MergeEventType};
 
     // Merge into a throwaway clone each attempt: a failed merge can leave the
     // destination partially mutated, so we only commit a clean result.
     let base = local.clone();
-    let mut remote = open_remote(bytes, session_key, password)?;
 
     let mut guard = 0usize;
     let (merged, log) = loop {

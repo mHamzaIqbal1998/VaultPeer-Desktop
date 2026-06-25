@@ -81,7 +81,11 @@ pub struct CreateOptions {
 impl Default for CreateOptions {
     fn default() -> Self {
         Self {
-            kdf: "argon2id".to_string(),
+            // Argon2d (not Argon2id) + AES-256 is the format every VaultPeer node
+            // reads: the mobile app (kdbxweb) and the storage node all open it,
+            // and it's what P2P sync normalizes to. Keeping the on-disk default
+            // here means a desktop-created vault is natively cross-compatible.
+            kdf: "argon2d".to_string(),
             cipher: "aes256".to_string(),
             kdf_memory_mib: 64,
             kdf_iterations: 10,
@@ -153,7 +157,12 @@ fn compression_from(name: &str) -> CompressionConfig {
 }
 
 fn kdf_from(opts: &CreateOptions) -> KdfConfig {
-    let memory = opts.kdf_memory_mib.saturating_mul(1024); // MiB -> KiB
+    // keepass-rs stores the Argon2 `M` parameter in **bytes** (it derives the
+    // argon2 `mem_cost` KiB as `memory / 1024`), and so does the KDBX spec /
+    // kdbxweb. So convert MiB → bytes here. (Previously this multiplied by only
+    // 1024, configuring 1024× too little memory — a "64 MiB" vault ran with 64
+    // KiB, which is both weak and why mobile displayed "64 KiB".)
+    let memory = opts.kdf_memory_mib.saturating_mul(1024 * 1024); // MiB -> bytes
     match opts.kdf.to_lowercase().as_str() {
         "aes" => KdfConfig::Aes {
             rounds: opts.aes_rounds,
@@ -217,7 +226,8 @@ pub fn current_create_options(db: &Database) -> CreateOptions {
         } => {
             opts.kdf = "argon2d".into();
             opts.kdf_iterations = *iterations;
-            opts.kdf_memory_mib = (*memory / 1024).max(1);
+            // `memory` is stored in bytes (see `kdf_from`); report MiB.
+            opts.kdf_memory_mib = (*memory / (1024 * 1024)).max(1);
             opts.kdf_parallelism = *parallelism;
         }
         KdfConfig::Argon2id {
@@ -228,7 +238,7 @@ pub fn current_create_options(db: &Database) -> CreateOptions {
         } => {
             opts.kdf = "argon2id".into();
             opts.kdf_iterations = *iterations;
-            opts.kdf_memory_mib = (*memory / 1024).max(1);
+            opts.kdf_memory_mib = (*memory / (1024 * 1024)).max(1);
             opts.kdf_parallelism = *parallelism;
         }
         _ => {}
@@ -320,7 +330,8 @@ pub fn metadata_from(db: &Database, path: &str) -> DatabaseMetadata {
         } => (
             "Argon2d".to_string(),
             *iterations,
-            Some(*memory),
+            // `memory` is bytes (see `kdf_from`); report KiB to match the field name.
+            Some(*memory / 1024),
             Some(*parallelism),
         ),
         KdfConfig::Argon2id {
@@ -331,7 +342,7 @@ pub fn metadata_from(db: &Database, path: &str) -> DatabaseMetadata {
         } => (
             "Argon2id".to_string(),
             *iterations,
-            Some(*memory),
+            Some(*memory / 1024),
             Some(*parallelism),
         ),
         _ => ("Unknown".to_string(), 0, None, None),
@@ -492,6 +503,30 @@ mod tests {
         assert!(matches!(pw_only, Err(AppError::InvalidCredentials)));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn argon2_memory_is_stored_in_bytes_and_reads_back_in_mib() {
+        // A "64 MiB" setting must configure 64 MiB of Argon2 memory (stored as
+        // bytes in the KDF dict), not 64 KiB — and must read back as 64 MiB.
+        let opts = CreateOptions {
+            kdf: "argon2d".into(),
+            cipher: "aes256".into(),
+            kdf_memory_mib: 64,
+            kdf_iterations: 1,
+            kdf_parallelism: 1,
+            aes_rounds: 1000,
+            compression: "gzip".into(),
+        };
+        let db = create_database("Mem", &opts);
+        // Stored memory is bytes: 64 MiB = 67108864.
+        match &db.config.kdf_config {
+            KdfConfig::Argon2 { memory, .. } => assert_eq!(*memory, 64 * 1024 * 1024),
+            other => panic!("expected Argon2d, got {other:?}"),
+        }
+        // Reads back as 64 MiB for the settings editor, and 65536 KiB for metadata.
+        assert_eq!(current_create_options(&db).kdf_memory_mib, 64);
+        assert_eq!(metadata_from(&db, "/x.kdbx").kdf_memory_kib, Some(65536));
     }
 
     #[test]

@@ -445,26 +445,43 @@ A refined adaptation of the mobile Cyber-Sage aesthetic optimized for desktop in
 
 **Focus**: Data portability and browser workflow integration.
 
-- [ ] Implement import:
-  - [ ] CSV import (1Password, LastPass, Bitwarden formats)
-  - [ ] KDBX import (merge into existing)
-  - [ ] Import preview with duplicate detection
-  - [ ] Field mapping for CSV columns
-- [ ] Implement export:
-  - [ ] CSV export (with security warnings)
-  - [ ] JSON export
-  - [ ] KDBX export (different encryption settings)
-- [ ] Implement browser integration:
-  - [ ] Native Messaging host setup
-  - [ ] HTTP server mode for localhost communication
-  - [ ] URL matching for credential suggestions
-  - [ ] Browser extension manifest (Chrome/Edge/Firefox)
-- [ ] Build import/export UI:
-  - [ ] File picker with format selection
-  - [ ] Progress indicators for large imports
-  - [ ] Success/error reporting
+- [x] Implement import:
+  - [x] CSV import (1Password, LastPass, Bitwarden formats) (native RFC-4180 parser in `import.rs`; header-driven mapping with per-format detection — Bitwarden `login_*`, LastPass `grouping`/`extra`, 1Password `otpauth`/`title`+`url` — so even unrecognized exports still import; 7 unit tests)
+  - [x] KDBX import (merge into existing) (`import_kdbx` reuses the shared, history-preserving `sync::merge_database` — refactored out of `merge_snapshot` — so importing another vault is non-destructive and newer-wins)
+  - [x] Import preview with duplicate detection (`preview_csv` flags rows whose title+username+URL already exist; KDBX import shows a dry-run merge preview — created/updated/moved counts — against a clone before committing)
+  - [x] Field mapping for CSV columns (`ColumnMapping` + `default_mapping` alias matching; the UI lets the user re-map any field to any column and re-previews live)
+- [x] Implement export:
+  - [x] CSV export (with security warnings) (`export::to_csv`, surfaced in both the Security tab and the new Import/Export panel with an unencrypted-plaintext warning)
+  - [x] JSON export (`export::to_json` — structured document with group path, tags, and custom fields, serialized via serde_json)
+  - [x] KDBX export (different encryption settings) (`export::export_kdbx` clones the vault, applies chosen KDF/cipher and a new master password/key file, re-serializes; the live on-disk vault is untouched)
+- [x] Implement browser integration:
+  - [x] Native Messaging host setup (`browser::run_native_messaging_host` — a stdin/stdout length-prefixed-JSON proxy launched via the `--native-messaging-host` flag, handled first in `lib::run` before the GUI builds; relays to the loopback server over a dependency-free raw-TCP HTTP GET; Windows registry registration under HKCU `…\NativeMessagingHosts` for Chrome/Edge, stub + README guidance elsewhere)
+  - [x] HTTP server mode for localhost communication (`browser::BrowserServer` — a tiny synchronous `tiny_http` server bound to `127.0.0.1` only, **off by default**, per-session bearer token; `/vaultpeer/health` (open) + `/vaultpeer/suggest?url=` (token-gated, 423 when locked). Start/stop from Settings → Browser; port + token persisted to `browser_integration.json` so the native host can find it)
+  - [x] URL matching for credential suggestions (`browser::matching_entry_ids` — host-normalized exact/parent-domain ranking; exposed in-app via the `match_url` command (no secrets) and to the extension via `/suggest` which includes the password + live TOTP)
+  - [x] Browser extension manifest (Chrome/Edge/Firefox) (`write_extension_bundle` writes a ready-to-load extension — MV3 `manifest.json` for Chrome/Edge, MV2 `manifest.firefox.json`, background/content/popup scripts — plus the native-host manifest and a README, to a user-chosen folder)
+- [x] Build import/export UI:
+  - [x] File picker with format selection (`ImportExportPanel` with Import/Export tabs, CSV/KDBX source cards, and native CSV/`.kdbx`/directory dialogs; opened from a new title-bar action when unlocked)
+  - [x] Progress indicators for large imports (busy/"Importing…"/"Working…" states on every async action; the CSV preview shows running entry + duplicate counts before committing)
+  - [x] Success/error reporting (per-action success summaries — imported/skipped/merged counts — and inline error banners throughout the panel and the Browser settings tab)
 
-**Deliverable**: Can migrate from other password managers and integrate with browsers.
+**Deliverable**: Can migrate from other password managers and integrate with browsers. ✅
+
+> Note: import/export and URL-matching logic live in Tauri-free modules
+> (`import.rs`, `export.rs`, `browser.rs`) and are covered by Rust unit tests
+> (7 import + 2 new export + 6 browser, all green). The CSV importer is
+> **header-driven**: the source format is detected only for display, while the
+> actual column→field mapping is derived from header aliases and fully editable
+> in the UI, so a CSV from any manager imports. KDBX import is a real
+> KeePass-compatible **merge** (shared with P2P sync), never an overwrite.
+> Browser integration is **local-only and opt-in**: the connector server binds
+> to `127.0.0.1` exclusively, is disabled until enabled in Settings, and gates
+> the credential endpoint behind a per-session token — the decrypted vault still
+> never leaves the backend except as the specific field the extension asked for.
+> The native-messaging host runs the same binary with a flag and proxies to that
+> loopback server, so no separate proxy executable ships. `tiny_http` is the only
+> new crate (small, synchronous, no async runtime — keeps the single-small-binary
+> footprint). The Windows-only pieces (native-host registry registration) compile
+> everywhere via a stub that points the user at the bundle README.
 
 ---
 

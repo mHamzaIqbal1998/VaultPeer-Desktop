@@ -11,8 +11,10 @@ mod commands;
 mod crypto;
 mod database;
 mod error;
+mod browser;
 mod export;
 mod fs_ops;
+mod import;
 mod otp;
 mod search;
 mod session;
@@ -27,6 +29,15 @@ use crate::settings::SettingsState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Native-messaging host mode (PLAN Phase 9 / BRW-01): when a browser launches
+    // this executable with the host flag, act as a stdin/stdout proxy to the
+    // running app's loopback server instead of starting a second GUI instance.
+    #[cfg(desktop)]
+    if std::env::args().any(|a| a == browser::NATIVE_MESSAGING_FLAG) {
+        browser::run_native_messaging_host();
+        return;
+    }
+
     // Global auto-type hotkeys (PLAN Phase 6): Ctrl+Alt+A types the matched
     // entry; Ctrl+Alt+P types only its password (selective). Ctrl+Alt+P is used
     // instead of Ctrl+Shift+A because browsers grab the latter (Chrome's
@@ -85,6 +96,8 @@ pub fn run() {
         .manage(autotype::AutoTypeTarget::default())
         // Application settings, loaded from disk during setup (Phase 7).
         .manage(SettingsState::default())
+        // Optional localhost browser-integration HTTP server (Phase 9 / BRW-02).
+        .manage(crate::browser::BrowserServer::default())
         .setup(move |app| {
             tray::create_tray(app.handle())?;
 
@@ -196,6 +209,17 @@ pub fn run() {
             commands::sync_fingerprint,
             commands::sync_export_snapshot,
             commands::sync_merge_snapshot,
+            commands::import_csv_preview,
+            commands::import_csv_apply,
+            commands::import_kdbx_preview,
+            commands::import_kdbx_apply,
+            commands::export_kdbx,
+            commands::match_url,
+            commands::browser_server_status,
+            commands::browser_server_start,
+            commands::browser_server_stop,
+            commands::export_browser_extension,
+            commands::register_native_host,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VaultPeer");

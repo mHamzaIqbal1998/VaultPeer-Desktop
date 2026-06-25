@@ -18,6 +18,13 @@ import {
   biometricIsEnrolled,
   biometricEnroll,
   biometricForget,
+  browserServerStatus,
+  browserServerStart,
+  browserServerStop,
+  exportBrowserExtension,
+  registerNativeHost,
+  openDirectoryDialog,
+  type BrowserServerStatus,
   type CreateOptions,
   type DbSettings,
   type ShortcutBindings,
@@ -25,7 +32,7 @@ import {
 import { captureAccelerator } from "@/lib/shortcuts";
 import { PasswordField } from "./PasswordField";
 
-type Tab = "app" | "database" | "security" | "sync";
+type Tab = "app" | "database" | "security" | "sync" | "browser";
 
 interface Props {
   onClose: () => void;
@@ -53,6 +60,7 @@ export function SettingsPanel({ onClose }: Props) {
     { id: "database", label: "Database" },
     { id: "security", label: "Security" },
     { id: "sync", label: "Sync" },
+    { id: "browser", label: "Browser" },
   ];
 
   return (
@@ -109,6 +117,7 @@ export function SettingsPanel({ onClose }: Props) {
               <SecurityTab isUnlocked={isUnlocked} dbPath={metadata?.path ?? null} />
             )}
             {tab === "sync" && <SyncTab />}
+            {tab === "browser" && <BrowserTab />}
           </div>
         </div>
       </motion.div>
@@ -537,6 +546,13 @@ function DatabaseTab({ isUnlocked }: { isUnlocked: boolean }) {
             ["none", "None"],
           ]}
         />
+        {(enc.kdf === "aes" || enc.cipher === "twofish") && (
+          <p className="text-[11px] text-status-warning">
+            ⚠ AES-KDF and Twofish can't be opened by VaultPeer mobile or other
+            KeePass apps. For cross-device sync, choose Argon2d (or Argon2id) with
+            AES-256 or ChaCha20, then Save &amp; re-encrypt.
+          </p>
+        )}
       </Section>
 
       <Section title="Recycle bin & history">
@@ -667,6 +683,13 @@ function NewDatabaseDefaults() {
           ["none", "None"],
         ]}
       />
+      {(options.kdf === "aes" || options.cipher === "twofish") && (
+        <p className="text-[11px] text-status-warning">
+          ⚠ AES-KDF and Twofish can't be opened by VaultPeer mobile or other
+          KeePass apps. For cross-device sync, use Argon2d (or Argon2id) with
+          AES-256 or ChaCha20.
+        </p>
+      )}
     </Section>
   );
 }
@@ -1010,6 +1033,169 @@ function SyncTab() {
           </button>
         </div>
       </Section>
+    </div>
+  );
+}
+
+// ── Browser tab (PLAN Phase 9 / BRW-01..03) ───────────────────────────────────
+
+const DEFAULT_BROWSER_PORT = 7796;
+
+function BrowserTab() {
+  const [status, setStatus] = useState<BrowserServerStatus | null>(null);
+  const [port, setPort] = useState(DEFAULT_BROWSER_PORT);
+  const [bundleDir, setBundleDir] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    void browserServerStatus()
+      .then((s) => {
+        setStatus(s);
+        if (s.running && s.port) setPort(s.port);
+      })
+      .catch(() => {});
+  }, []);
+
+  async function toggleServer(enabled: boolean) {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      if (enabled) {
+        setStatus(await browserServerStart(port, null));
+      } else {
+        await browserServerStop();
+        setStatus(await browserServerStatus());
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyToken() {
+    if (!status?.token) return;
+    try {
+      await navigator.clipboard.writeText(status.token);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function exportBundle() {
+    setError(null);
+    setNote(null);
+    try {
+      const dir = await openDirectoryDialog("Choose where to write the extension");
+      if (!dir) return;
+      await exportBrowserExtension(dir);
+      setBundleDir(dir);
+      setNote(`Extension written to ${dir}. Load it unpacked in your browser.`);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function register() {
+    if (!bundleDir) return;
+    setError(null);
+    setNote(null);
+    try {
+      const sep = bundleDir.includes("\\") ? "\\" : "/";
+      await registerNativeHost(`${bundleDir}${sep}com.vaultpeer.desktop.json`);
+      setNote("Native messaging host registered for Chrome/Edge.");
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  const running = status?.running ?? false;
+
+  return (
+    <div className="space-y-6">
+      <Section title="Local connector server">
+        <p className="text-xs text-text-muted">
+          Runs a small HTTP server on <code className="font-mono">127.0.0.1</code>{" "}
+          (loopback only) so a browser extension can request credentials for the
+          page you're on. Off by default; secured with a per-session token.
+        </p>
+        <Row label="Port" hint="Restart the server to change.">
+          <input
+            type="number"
+            value={port}
+            min={1024}
+            max={65535}
+            disabled={running}
+            onChange={(e) => setPort(Number(e.target.value) || DEFAULT_BROWSER_PORT)}
+            className="w-24 rounded-lg border border-border-sage bg-background-primary px-2.5 py-1.5 text-sm text-text-primary outline-none focus:border-accent-mint disabled:opacity-50"
+          />
+        </Row>
+        <ToggleRow
+          label="Enable connector server"
+          hint={running ? `Listening on 127.0.0.1:${status?.port}` : "Stopped"}
+          checked={running}
+          onChange={(v) => void toggleServer(v)}
+        />
+        {busy && <p className="text-xs text-text-muted">Working…</p>}
+        {running && status?.token && (
+          <div className="space-y-1 rounded-lg border border-border-sage bg-background-primary/40 p-3">
+            <div className="text-[11px] text-text-muted">
+              Connection token — paste into the extension popup:
+            </div>
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate font-mono text-xs text-text-secondary">
+                {status.token}
+              </code>
+              <button
+                type="button"
+                onClick={copyToken}
+                className="shrink-0 rounded-md border border-border-sage px-2 py-1 text-[11px] text-text-primary transition-colors hover:border-accent-mint/40"
+              >
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+          </div>
+        )}
+      </Section>
+
+      <Section title="Browser extension">
+        <p className="text-xs text-text-muted">
+          Write a ready-to-load extension (Chrome/Edge/Firefox) to a folder, then
+          load it unpacked and paste the port + token above into its popup.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={exportBundle}
+            className="rounded-lg border border-border-sage bg-surface-elevated px-3 py-1.5 text-xs font-medium text-text-primary transition-colors hover:border-accent-mint/40"
+          >
+            Export extension files…
+          </button>
+          <button
+            type="button"
+            onClick={register}
+            disabled={!bundleDir}
+            className="rounded-lg border border-border-sage bg-surface-elevated px-3 py-1.5 text-xs font-medium text-text-muted transition-colors hover:border-accent-mint/40 disabled:opacity-50"
+            title="Advanced & optional — the bundled extension uses the connector server above, not native messaging. Windows only."
+          >
+            Register native host (advanced)
+          </button>
+        </div>
+        <p className="text-[11px] text-text-muted">
+          The bundled extension uses the connector server above. “Register native
+          host” is optional and only matters for a custom native-messaging
+          extension — it won't change how the bundled one behaves.
+        </p>
+      </Section>
+
+      {note && <p className="text-xs text-status-success">{note}</p>}
+      {error && <p className="text-xs text-status-error">{error}</p>}
     </div>
   );
 }
