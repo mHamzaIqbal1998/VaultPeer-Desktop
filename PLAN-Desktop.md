@@ -536,6 +536,291 @@ A refined adaptation of the mobile Cyber-Sage aesthetic optimized for desktop in
 
 ---
 
+### Phase 11: Config Storage Security Hardening
+
+**Focus**: Protect sensitive data at rest in the app-config JSON files, harden the browser integration surface, and enforce filesystem permissions on the config directory.
+
+**Context**: The four JSON config files under `app_config_dir()` (`settings.json`, `quickunlock.json`, `browser_integration.json`, `sync_mtimes.json`) are written as plaintext JSON. While `quickunlock.json` encrypts its _values_ with DPAPI, the other files — including the browser bearer token and TURN credentials — are stored in the clear. Any process running as the current Windows user can read them. This phase addresses those gaps.
+
+---
+
+#### SEC-01: DPAPI-Encrypt the Browser Integration Token
+
+**Problem**: `browser_integration.json` stores the bearer token in plaintext. Any local process can read this file and call `/vaultpeer/suggest?url=...` with the stolen token while the vault is unlocked, silently exfiltrating credentials.
+
+**Current code** (`browser.rs`):
+```rust
+pub struct IntegrationConfig {
+    pub enabled: bool,
+    pub port: u16,
+    pub token: String,       // ← plaintext hex string on disk
+}
+```
+
+**Solution**: DPAPI-protect the token before writing and unprotect on read, using the same `CryptProtectData`/`CryptUnprotectData` flow already proven in `biometric.rs`.
+
+**Implementation**:
+
+1. **Add a DPAPI helper module** or extract the existing `protect()`/`unprotect()` from `biometric.rs` into a shared `dpapi.rs` module so both `biometric.rs` and `browser.rs` can reuse it without duplicating unsafe FFI code.
+
+2. **Change the on-disk schema** for `browser_integration.json`:
+   ```rust
+   #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+   #[serde(rename_all = "camelCase")]
+   pub struct IntegrationConfig {
+       pub enabled: bool,
+       pub port: u16,
+       /// DPAPI-encrypted token bytes (base64-encoded for JSON safety).
+       /// Empty when server is stopped.
+       pub token_protected: Vec<u8>,
+   }
+   ```
+   Keep a `#[serde(default)]` on `token_protected` and a `#[serde(alias = "token")]` migration path so an existing plaintext `token` field is read once, re-encrypted, and saved in the new format on first launch.
+
+3. **Encrypt on write**: In `write_integration_config()`, call `dpapi::protect(token.as_bytes())` and store the ciphertext in `token_protected`.
+
+4. **Decrypt on read**: In `auto_start_from_config()` and the native-messaging host path, call `dpapi::unprotect(&cfg.token_protected)` to recover the token into memory only.
+
+5. **Non-Windows stub**: On non-Windows, store the token as-is (there is no DPAPI) and log a warning. Alternatively, use a platform-appropriate keyring (out of scope for V1 Windows target).
+
+**Files to modify**: `browser.rs`, new `dpapi.rs`, `biometric.rs` (refactor to use shared `dpapi.rs`).
+
+**Tests**: Unit test round-trip (protect → unprotect == original) in `dpapi.rs`. Integration test: start server → stop → read config file from disk → confirm `token` field absent and `token_protected` is not the original plaintext.
+
+---
+
+#### SEC-02: Enforce Config Directory Permissions on Startup
+
+**Problem**: `security.rs` has `ensure_config_dir_security()` (which creates the config dir with `0700` on Unix) and `check_file_permissions()`, but neither is called anywhere in the application startup path. The config directory inherits whatever permissions the OS gives it by default.
+
+**Current code** (`security.rs`):
+```rust
+#[allow(dead_code)]   // ← never called
+pub fn ensure_config_dir_security(dir: &Path) -> Result<(), String> { ... }
+```
+
+**Solution**: Call `ensure_config_dir_security()` at startup in `lib.rs` → `.setup()`, right after loading settings and before any file reads/writes.
+
+**Implementation**:
+
+1. **Wire into startup** (`lib.rs` inside the `.setup()` closure):
+   ```rust
+   // Harden config directory permissions (Phase 11 / SEC-02).
+   let config_dir = app.path().app_config_dir()
+       .expect("could not resolve app config dir");
+   if let Err(e) = security::ensure_config_dir_security(&config_dir) {
+       eprintln!("[vaultpeer] warning: could not secure config dir: {e}");
+   }
+   ```
+
+2. **Add Windows ACL enforcement** to `ensure_config_dir_security()`: On Windows, the Unix `0700` branch is a no-op. Add a Windows-specific implementation that uses `SetNamedSecurityInfoW` or `icacls` to restrict the directory to the current user only (remove `Authenticated Users` / `BUILTIN\Users` inherited ACEs). This prevents other user accounts on a shared machine from reading the config.
+
+3. **Remove `#[allow(dead_code)]`** from both functions now that they are actively used.
+
+4. **Also call on each `write_file_atomic`** (optional, belt-and-suspenders): Verify the parent directory still has correct permissions before writing sensitive files. This guards against a user or tool accidentally loosening permissions mid-session.
+
+**Files to modify**: `lib.rs`, `security.rs`.
+
+**Tests**: Existing tests in `security.rs` already cover creation + Unix perms. Add a Windows-specific test that creates a temp dir, calls the function, and verifies the ACL (or, if that's too complex in CI, at least verify no error is returned).
+
+---
+
+#### SEC-03: Gate the `/vaultpeer/health` Endpoint Behind Authentication
+
+**Problem**: The `/vaultpeer/health` endpoint responds without any bearer token, exposing whether the vault is currently unlocked:
+```json
+{"status":"ok","app":"VaultPeer","unlocked":true}
+```
+This lets any local process or web page (via `fetch("http://127.0.0.1:7796/vaultpeer/health")`) probe vault state and time attacks for when the user unlocks.
+
+**Solution**: Two-tier fix:
+
+1. **Require the bearer token** on `/vaultpeer/health`, making it consistent with `/vaultpeer/suggest`. Any caller that needs the health check already has the token (the extension stores it).
+
+2. **Remove the `unlocked` field** from the unauthenticated response. If backward compatibility with existing extension installs is needed, return only `{"status":"ok","app":"VaultPeer"}` without auth, and include the full payload (with `unlocked`) only when a valid token is provided.
+
+**Implementation** (`browser.rs`, inside `handle_request`):
+
+```rust
+"/vaultpeer/health" => {
+    let auth = header_value(&request, "Authorization");
+    if auth.trim() == format!("Bearer {token}") {
+        let unlocked = session.is_unlocked();
+        json_response(200, format!(
+            "{{\"status\":\"ok\",\"app\":\"VaultPeer\",\"unlocked\":{unlocked}}}"
+        ), &origin)
+    } else {
+        // Unauthenticated callers learn the server exists, nothing more.
+        json_response(200, "{\"status\":\"ok\",\"app\":\"VaultPeer\"}".into(), &origin)
+    }
+}
+```
+
+3. **Update the generated browser extension** (`popup.js` / background script) to include the `Authorization` header when hitting `/health`.
+
+**Files to modify**: `browser.rs` (server handler + extension template in `write_extension_bundle`).
+
+**Tests**: Add browser unit tests: unauthenticated `/health` returns no `unlocked` field; authenticated `/health` returns it. Existing `/suggest` tests stay unchanged.
+
+---
+
+#### SEC-04: Rotate the Browser Token on Each App Launch
+
+**Problem**: `auto_start_from_config()` reuses the same token from `browser_integration.json` across restarts. If the token is ever leaked (malware snapshot, backup exposure, a user copying the file), it remains valid indefinitely.
+
+**Current code** (`browser.rs`):
+```rust
+pub fn auto_start_from_config<R: Runtime>(app: &AppHandle<R>) {
+    // Reads saved config and re-starts the server with the SAME token.
+}
+```
+
+**Solution**: On each app launch, generate a fresh token and persist it, so any previously-leaked token becomes useless.
+
+**Implementation**:
+
+1. **In `auto_start_from_config()`**: When `cfg.enabled == true`, generate a new token (two UUID v4s, same as the manual-start path) instead of reusing `cfg.token`. Start the server with the new token. Save the updated config.
+
+2. **Notify the extension**: The browser extension currently reads the token from `chrome.storage.local` (set during initial setup). After rotation, the extension's stored token is stale. Two options:
+   - **Option A (Recommended)**: The native-messaging host reads the _current_ config from disk on each invocation (it already does), so native-messaging-based communication self-heals. For the extension popup's manual "test connection" flow, add a small "re-sync token" button or auto-read via native messaging on popup open.
+   - **Option B**: Write the new token to a well-known location the extension can poll (e.g., the native-messaging host returns the current token on a `getToken` message type).
+
+3. **Invalidation log** (optional): When rotating, log the old token prefix (first 8 chars) and the new one for debugging connection issues.
+
+**Files to modify**: `browser.rs` (`auto_start_from_config`, `write_extension_bundle` template).
+
+**Tests**: Unit test: call `auto_start_from_config` twice with a config file → second call's token differs from the first.
+
+---
+
+#### SEC-05: Add DPAPI Additional Entropy for App-Scoped Binding
+
+**Problem**: DPAPI's `CryptProtectData` with no optional entropy (`pOptionalEntropy = NULL`) produces ciphertext that _any_ process running as the same Windows user can decrypt by calling `CryptUnprotectData`. This means malware running under the user's account could read `quickunlock.json`, call `CryptUnprotectData`, and recover the master password — bypassing Windows Hello entirely (Hello is enforced only by VaultPeer's code path, not by DPAPI).
+
+**Current code** (`biometric.rs`):
+```rust
+CryptProtectData(&mut input, None, None, None, None, 0, &mut output)
+//                                ^^^^ pOptionalEntropy = NULL
+```
+
+**Solution**: Pass an app-specific entropy secret to `pOptionalEntropy`. This acts as a second factor: even if another process has the DPAPI blob, it cannot decrypt without knowing the entropy value.
+
+**Implementation**:
+
+1. **Define a static entropy value** — a compile-time constant unique to VaultPeer:
+   ```rust
+   /// App-scoped DPAPI entropy. Not a secret per se (it's in the binary), but
+   /// raises the bar: an attacker must reverse-engineer or dump this from the
+   /// running process rather than just calling CryptUnprotectData on the raw blob.
+   const DPAPI_ENTROPY: &[u8] = b"VaultPeer-Desktop-v1-dpapi-entropy-a7f3...";
+   ```
+   Generate the trailing random bytes once (e.g., 32 random bytes, hex-encoded) and embed them as a constant.
+
+2. **Pass entropy in `protect()` and `unprotect()`** in the new shared `dpapi.rs`:
+   ```rust
+   let mut entropy = CRYPT_INTEGER_BLOB {
+       cbData: DPAPI_ENTROPY.len() as u32,
+       pbData: DPAPI_ENTROPY.as_ptr() as *mut u8,
+   };
+   CryptProtectData(&mut input, None, Some(&mut entropy), None, None, 0, &mut output)
+   ```
+
+3. **Migration**: Existing `quickunlock.json` blobs were encrypted without entropy. On first read after upgrade, `unprotect` with entropy will fail. Catch that error, retry without entropy (old path), re-encrypt the recovered plaintext _with_ entropy, and save. This is a one-time transparent migration.
+
+4. **Apply to browser token too** (SEC-01 uses the same `dpapi.rs`), so browser tokens also get the app-scoped binding.
+
+**Files to modify**: New `dpapi.rs` (shared), `biometric.rs` (call shared module), `browser.rs` (call shared module).
+
+**Tests**: 
+- Round-trip with entropy: `protect_with_entropy → unprotect_with_entropy == original`.
+- Wrong-entropy rejection: `protect_with_entropy → unprotect_without_entropy` fails.
+- Migration path: `protect_without_entropy → unprotect_with_fallback` succeeds and re-encrypts.
+
+**Security note**: This is defense-in-depth, not a full solution. A sophisticated attacker can extract the entropy from the binary. The real defense remains Windows Hello gating the unlock flow. This just eliminates the trivial `CryptUnprotectData` one-liner attack.
+
+---
+
+#### SEC-06: Encrypt TURN Credentials and Sensitive Sync Config
+
+**Problem**: `settings.json` stores ICE/TURN server credentials (`username`, `credential`) in plaintext:
+```json
+{
+  "sync": {
+    "iceServers": [{
+      "urls": ["turn:my-server.com:3478"],
+      "username": "myuser",
+      "credential": "mysecretpassword"   // ← plaintext on disk
+    }]
+  }
+}
+```
+TURN credentials grant relay access and could be abused for bandwidth theft or to route traffic through the user's TURN server.
+
+**Solution**: DPAPI-protect TURN credentials before persisting, decrypt on load.
+
+**Implementation**:
+
+1. **Add an encrypted wrapper type** for optional secret fields:
+   ```rust
+   #[derive(Debug, Clone, Serialize, Deserialize)]
+   #[serde(untagged)]
+   enum SecretField {
+       /// DPAPI-encrypted bytes (after migration).
+       Protected { protected: Vec<u8> },
+       /// Legacy plaintext (pre-migration, will be re-encrypted on next save).
+       Plain(String),
+   }
+   ```
+
+2. **Apply to `IceServer`** in `sync.rs`:
+   ```rust
+   pub struct IceServer {
+       pub urls: Vec<String>,
+       #[serde(default, skip_serializing_if = "Option::is_none")]
+       pub username: Option<SecretField>,
+       #[serde(default, skip_serializing_if = "Option::is_none")]
+       pub credential: Option<SecretField>,
+   }
+   ```
+
+3. **Transparent migration**: On `settings::load()`, if a `Plain` variant is found, re-encrypt it with `dpapi::protect()` and re-save. Subsequent reads get the `Protected` variant.
+
+4. **Frontend impact**: The frontend never persists credentials directly — it sends them to the Rust backend via `save_settings`, which handles encryption. The `get_settings` command returns the decrypted values for UI display.
+
+5. **Scope control**: Only `username` and `credential` are encrypted. `urls`, `signalingUrl`, and `room` are left as plaintext (not secret — the room code is shared openly during pairing, and server URLs are non-sensitive).
+
+**Files to modify**: `sync.rs` (schema), `settings.rs` (encrypt on save, decrypt on load), new `dpapi.rs` (shared encrypt/decrypt).
+
+**Tests**: Round-trip: save settings with TURN creds → read raw file from disk → confirm `credential` field is `{ "protected": [...] }` not plaintext. Load settings → confirm decrypted value matches original.
+
+---
+
+#### Implementation Order & Dependencies
+
+```
+SEC-01 ─┐
+SEC-05 ─┤──→ Extract shared dpapi.rs first (prerequisite for 01, 05, 06)
+SEC-06 ─┘
+SEC-02 ────→ Independent, can start immediately
+SEC-03 ────→ Independent, can start immediately
+SEC-04 ────→ Depends on SEC-01 (token is DPAPI-protected, rotation writes new protected blob)
+```
+
+**Recommended sequence**:
+1. **dpapi.rs extraction** (shared module from `biometric.rs`) — unblocks SEC-01, SEC-05, SEC-06
+2. **SEC-02** (one-line wiring + Windows ACL) — quick win, independent
+3. **SEC-03** (health endpoint auth) — quick win, independent
+4. **SEC-05** (DPAPI entropy) — changes `dpapi.rs` before SEC-01/SEC-06 consume it
+5. **SEC-01** (browser token encryption) — uses finalized `dpapi.rs`
+6. **SEC-06** (TURN credential encryption) — uses finalized `dpapi.rs`
+7. **SEC-04** (token rotation) — builds on SEC-01's encrypted token infrastructure
+
+**Estimated effort**: ~2–3 days for all six items. SEC-02 and SEC-03 are < 1 hour each. The `dpapi.rs` extraction + SEC-05 is the largest single piece (~half day). SEC-01/SEC-06 are structurally similar and can be done back-to-back in a few hours. SEC-04 is a small change once SEC-01 is in place.
+
+**Deliverable**: All sensitive config values (browser token, quick-unlock passwords, TURN credentials) are DPAPI-encrypted at rest with app-scoped entropy. The config directory has restricted ACLs. The browser integration surface leaks no vault state to unauthenticated callers, and tokens rotate per session.
+
+---
+
 ## 📋 Component Inventory
 
 ### Rust Backend Components
