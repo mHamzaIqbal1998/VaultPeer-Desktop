@@ -108,6 +108,10 @@ pub fn run() {
                 .0
                 .lock()
                 .expect("settings mutex poisoned") = loaded;
+            // Restore the browser-integration HTTP server if it was running in
+            // the previous session (same port + token, no reconfiguration needed).
+            browser::auto_start_from_config(app.handle());
+
             #[cfg(desktop)]
             {
                 use tauri_plugin_global_shortcut::GlobalShortcutExt;

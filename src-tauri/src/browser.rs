@@ -442,6 +442,20 @@ fn read_integration_config() -> IntegrationConfig {
         .unwrap_or_default()
 }
 
+/// On startup, check the persisted integration config and restart the server if
+/// it was enabled in the previous session (preserving the same port and token so
+/// the browser extension doesn't need reconfiguring).
+pub fn auto_start_from_config<R: Runtime>(app: &AppHandle<R>) {
+    let cfg = read_integration_config();
+    if cfg.enabled && cfg.port > 0 && !cfg.token.is_empty() {
+        let server = app.state::<BrowserServer>();
+        match server.start(app, cfg.port, cfg.token) {
+            Ok(_) => eprintln!("[vaultpeer] browser server restored on port {}", cfg.port),
+            Err(e) => eprintln!("[vaultpeer] could not restore browser server: {e}"),
+        }
+    }
+}
+
 // ── Native messaging host (BRW-01) ────────────────────────────────────────────
 
 /// Run the native-messaging host loop: read length-prefixed JSON messages from
