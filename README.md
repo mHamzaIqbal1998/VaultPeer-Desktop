@@ -1,90 +1,127 @@
-# VaultPeerDesktop
+<p align="center">
+  <img src="src-tauri/icons/128x128.png" alt="VaultPeer logo" width="96" height="96" />
+</p>
 
-A modern, minimal, premium **KeePass-compatible** password manager for Windows, built with **Tauri (React + Rust)**.
+# VaultPeer Desktop
 
-> **Status:** Phase 1 complete — project scaffolding, Rust crypto-ready core structure, atomic file I/O, theme system, frameless title bar, and system-tray integration. See [`PLAN-Desktop.md`](./PLAN-Desktop.md) for the full roadmap.
+> The desktop app for VaultPeer — an open-source, privacy-first KeePass-compatible password manager with live multi-device sync over WebRTC.
 
 ---
 
-## Tech Stack
+## Table of Contents
 
-| Layer | Choice |
-|-------|--------|
-| Shell | Tauri 2 (WebView2 on Windows) |
-| Frontend | React 19 + TypeScript + Vite 6 |
-| Styling | Tailwind CSS v4 (`@theme` tokens) — "Cyber-Sage" palette |
-| State | Zustand (with `persist`) |
-| Animation | Framer Motion |
-| Backend | Rust 2021 (Tauri commands, atomic FS, modular core) |
+- [Introduction](#introduction)
+- [Features](#features)
+- [Installation](#installation)
+- [Usage Examples](#usage-examples)
+- [Testing](#testing)
+- [Building](#building)
+- [Dependencies](#dependencies)
+- [Related Projects](#related-projects)
+- [Contributing](#contributing)
+- [License](#license)
 
-## Project Structure
+---
 
-```
-.
-├── index.html
-├── package.json
-├── vite.config.ts
-├── src/                       # React frontend
-│   ├── main.tsx               # entry; boots theme listener
-│   ├── App.tsx
-│   ├── components/
-│   │   ├── TitleBar.tsx       # frameless custom title bar
-│   │   ├── WindowControls.tsx # min / max / close
-│   │   ├── ThemeToggle.tsx
-│   │   └── WelcomeScreen.tsx  # Phase 1 landing + file I/O self-test
-│   ├── stores/
-│   │   ├── themeStore.ts      # dark/light/system, persisted
-│   │   └── vaultStore.ts      # selected path + recent files
-│   ├── services/
-│   │   ├── tauri.ts           # typed IPC wrappers
-│   │   └── window.ts          # window-control wrappers
-│   └── styles/globals.css     # Cyber-Sage CSS variables + Tailwind theme
-└── src-tauri/                 # Rust backend
-    ├── Cargo.toml
-    ├── tauri.conf.json        # frameless window, tray, bundle config
-    ├── capabilities/default.json
-    ├── icons/                 # generated icon set (source.png is the master)
-    └── src/
-        ├── main.rs            # desktop entrypoint
-        ├── lib.rs             # builder: single-instance, dialog, tray, commands
-        ├── commands.rs        # greet / read_file / write_file / stat_file
-        ├── fs_ops.rs          # atomic write + read + stat (+ unit tests)
-        ├── tray.rs            # system tray icon & context menu
-        └── error.rs           # serializable AppError
-```
+## Introduction
 
-## Phase 1 Deliverables
+VaultPeer is an open-source, privacy-first password manager that gives you full control over your credentials. It stores vaults in the standard **KDBX** format used by KeePass and KeePassXC, encrypts everything at rest, and keeps your data on your device.
 
-- ✅ Tauri + React + TS + Tailwind v4 project scaffold
-- ✅ `tauri.conf.json`: frameless window, single-instance, tray icon, MSI/NSIS bundle targets
-- ✅ Rust commands: `greet`, `read_file`, `write_file` (**atomic**: temp file → fsync → rename), `stat_file`
-- ✅ Zustand stores: theme (dark/light/system, persisted) and vault (recent files)
-- ✅ Cyber-Sage theme system via CSS variables + Tailwind `@theme`
-- ✅ Frameless title bar with custom window controls + draggable region
-- ✅ System tray with Show / Lock (stub) / Quit + minimize-to-tray on close
-- ✅ Rust unit tests for file I/O (round-trip, overwrite, no temp leftover, mkdir, stat, error path)
+Unlike cloud-first password managers, VaultPeer syncs through a lightweight **WebRTC signaling server**. Desktop, mobile, and server nodes join a room on that server, discover each other, and exchange the encrypted `.kdbx` vault directly over a peer-to-peer data channel. The signaling server relays connection metadata only — it never sees your decrypted vault contents.
 
-## Prerequisites
+VaultPeer Desktop is the Windows client in that network. It unlocks and manages your vault locally, then syncs with other live nodes on startup and after local changes.
 
-- **Node.js 20+** and **npm**
-- **Rust 1.79+** (`rustup`)
-- **A C toolchain + WebView (platform-specific):**
-  - **Windows (the V1 target):** Visual Studio 2022 Build Tools (MSVC) + WebView2 (pre-installed on Win 10/11).
-  - **Linux / WSL (for dev only):**
-    ```bash
-    sudo apt-get update && sudo apt-get install -y \
-      build-essential curl wget file libssl-dev pkg-config \
-      libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
-      libayatana-appindicator3-dev
-    ```
-    > Note: a GUI build also needs a display. Headless WSL can compile/test the Rust core but cannot show the window — run the GUI on Windows.
+---
 
-## Development
+## Features
+
+- **KeePass-compatible storage** — Open, create, and save standard `.kdbx` databases with AES-256 / ChaCha20 encryption and Argon2 KDF.
+- **Live multi-device sync** — Connect to a VaultPeer signaling server, join a room, and sync with desktop, mobile, and server nodes over WebRTC.
+- **Offline access** — Your vault works without a network connection; sync runs when peers are available.
+- **Password generator** — Generate strong random passwords and Diceware-style passphrases.
+- **OTP / TOTP** — Scan QR codes or enter secrets manually for RFC 6238 one-time passwords.
+- **Auto-type** — Fill credentials into other apps with global hotkeys (Windows).
+- **Windows Hello** — Quick unlock with fingerprint, face, or PIN (DPAPI-protected).
+- **Browser integration** — Optional localhost API for credential suggestions from a browser extension.
+- **Import / export** — Bring in CSV exports from other managers; export KDBX copies for backup.
+- **No telemetry** — No analytics, no cloud vault, and no network activity unless you enable sync or browser integration.
+
+---
+
+## Installation
+
+### Prerequisites
+
+- **Node.js 20+** — check `.nvmrc` and verify with:
 
 ```bash
-npm install            # install frontend deps
-npm run tauri dev      # run the desktop app with hot reload
+node --version
 ```
+
+- **Rust 1.79+** — install via [rustup](https://rustup.rs/).
+- **Windows build tools** (for production installers):
+  - Visual Studio 2022 Build Tools (MSVC)
+  - WebView2 (pre-installed on Windows 10/11)
+
+For Linux/WSL development only, install the Tauri system dependencies listed in the [Tauri prerequisites guide](https://v2.tauri.app/start/prerequisites/).
+
+### Steps
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/mHamzaIqbal1998/VaultPeer-Desktop.git
+
+# 2. Go to the cloned directory
+cd VaultPeer-Desktop
+
+# 3. Install dependencies
+npm install
+
+# 4. Start the development app
+npm run tauri dev
+```
+
+### End-user install (Windows)
+
+Download the latest **MSI** or **NSIS** installer from [GitHub Releases](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop/releases).
+
+---
+
+## Usage Examples
+
+See the in-repo documentation for detailed guides:
+
+| Document | Description |
+| -------- | ----------- |
+| [`docs/USER-GUIDE.md`](./docs/USER-GUIDE.md) | Setup, vault management, sync, auto-type, and settings |
+| [`docs/FAQ.md`](./docs/FAQ.md) | Common questions about KDBX, P2P sync, and troubleshooting |
+| [`docs/KEYBOARD-SHORTCUTS.md`](./docs/KEYBOARD-SHORTCUTS.md) | In-app and global shortcut reference |
+| [`docs/PRIVACY-POLICY.md`](./docs/PRIVACY-POLICY.md) | Data handling and network behavior |
+
+### Quick start
+
+1. Launch VaultPeer and **create** or **open** a `.kdbx` database.
+2. Unlock with your master password (and optional key file or Windows Hello).
+3. Add entries, groups, and attachments as needed.
+4. To sync, open **Settings → Sync**, enter your signaling server URL and room ID, then connect other VaultPeer nodes using the same vault filename.
+
+---
+
+## Testing
+
+### Frontend
+
+```bash
+npm test
+```
+
+### Rust backend
+
+```bash
+cd src-tauri && cargo test
+```
+
+---
 
 ## Building
 
@@ -93,43 +130,37 @@ npm run build          # type-check + build frontend
 npm run tauri build    # produce MSI / NSIS installer (on Windows)
 ```
 
-## Testing
+---
 
-```bash
-# Frontend type-check + bundle
-npm run build
+## Dependencies
 
-# Rust unit tests (run from src-tauri/)
-cd src-tauri && cargo test
-```
-
-## Regenerating Icons
-
-The icon set is generated from `src-tauri/icons/source.png`:
-
-```bash
-npm run icons
-```
-
-On Windows, `icon.ico` must contain **BMP-based** entries (not PNG-in-ICO) or the
-exe will keep showing an old embedded icon. Tauri also expects layers for
-16, 24, 32, 48, 64, and 256 px (32 px first). Regenerate with:
-
-```bash
-npm run icons:ico
-```
-
-`src-tauri/build.rs` emits `cargo:rerun-if-changed` for `icons/icon.ico` because
-upstream `tauri-build` does not — without that, incremental rebuilds skip
-re-embedding the icon even after you replace the file.
-
-After changing icons, do a clean rebuild so the Windows resource compiler picks
-up the new file:
-
-```bash
-cd src-tauri && cargo clean && cd .. && npm run tauri build
-```
+- [Tauri 2](https://v2.tauri.app/)
+- [React](https://react.dev/)
+- [Rust `keepass` crate](https://crates.io/crates/keepass) (KDBX read/write/merge)
+- [Tailwind CSS](https://tailwindcss.com/)
+- [Zustand](https://zustand.docs.pmnd.rs/)
+- [Vitest](https://vitest.dev/)
 
 ---
 
-**License:** TBD · **Compatibility:** KeePass 2.x (KDBX 3.1 / 4.0 / 4.1)
+## Related Projects
+
+| Project | Description |
+| ------- | ----------- |
+| [`VaultPeer-Desktop`](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop) | Windows desktop app (this repository) |
+| `VaultPeer-Mobile` | Mobile client for VaultPeer |
+| `VaultPeer-Server` | WebRTC signaling server used by all VaultPeer nodes |
+
+> Related repositories will be linked here as they are published. VaultPeer nodes share the same signaling protocol and KDBX vault format.
+
+---
+
+## Contributing
+
+We welcome contributions. See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the development workflow and coding conventions.
+
+---
+
+## License
+
+This project is licensed under the Apache License, Version 2.0. See the [LICENSE](./LICENSE) file for details.
