@@ -1,8 +1,10 @@
 [package]
 name = "vaultpeer-desktop"
-version = "0.1.0"
-description = "VaultPeer — KeePass-compatible password manager"
-authors = ["VaultPeer"]
+version = "1.0.0"
+description = "VaultPeer Desktop — open-source KeePass-compatible password manager with WebRTC sync"
+authors = ["VaultPeer Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/mHamzaIqbal1998/VaultPeer-Desktop"
 edition = "2021"
 rust-version = "1.79"
 

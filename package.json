@@ -1,9 +1,17 @@
 {
   "name": "vaultpeer-desktop",
-  "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
-  "description": "VaultPeerDesktop — KeePass-compatible password manager for Windows (Tauri + React + Rust)",
+  "license": "Apache-2.0",
+  "description": "VaultPeer Desktop — open-source KeePass-compatible password manager with WebRTC sync (Tauri + React + Rust)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mHamzaIqbal1998/VaultPeer-Desktop.git"
+  },
+  "homepage": "https://github.com/mHamzaIqbal1998/VaultPeer-Desktop#readme",
+  "bugs": {
+    "url": "https://github.com/mHamzaIqbal1998/VaultPeer-Desktop/issues"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
