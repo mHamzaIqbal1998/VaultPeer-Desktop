@@ -37,6 +37,8 @@ There is no telemetry, no analytics, and no cloud service.
 
 ## P2P Sync
 
+**Related repositories:** [VaultPeer-Desktop](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop) · [VaultPeer-Mobile](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile) · [VaultPeer-ServerNode](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) · [VaultPeer-Phonebook](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook)
+
 ### How does P2P sync work?
 
 1. Both devices connect to a lightweight WebSocket signaling server to discover each other.

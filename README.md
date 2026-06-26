@@ -27,7 +27,7 @@
 
 VaultPeer is an open-source, privacy-first password manager that gives you full control over your credentials. It stores vaults in the standard **KDBX** format used by KeePass and KeePassXC, encrypts everything at rest, and keeps your data on your device.
 
-Unlike cloud-first password managers, VaultPeer syncs through a lightweight **WebRTC signaling server**. Desktop, mobile, and server nodes join a room on that server, discover each other, and exchange the encrypted `.kdbx` vault directly over a peer-to-peer data channel. The signaling server relays connection metadata only — it never sees your decrypted vault contents.
+Unlike cloud-first password managers, VaultPeer syncs through a lightweight [**WebRTC signaling server**](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) and [**phonebook service**](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook). Desktop, mobile, and server nodes join a room on that server, discover each other, and exchange the encrypted `.kdbx` vault directly over a peer-to-peer data channel. The signaling server relays connection metadata only — it never sees your decrypted vault contents.
 
 VaultPeer Desktop is the Windows client in that network. It unlocks and manages your vault locally, then syncs with other live nodes on startup and after local changes.
 
@@ -36,7 +36,7 @@ VaultPeer Desktop is the Windows client in that network. It unlocks and manages 
 ## Features
 
 - **KeePass-compatible storage** — Open, create, and save standard `.kdbx` databases with AES-256 / ChaCha20 encryption and Argon2 KDF.
-- **Live multi-device sync** — Connect to a VaultPeer signaling server, join a room, and sync with desktop, mobile, and server nodes over WebRTC.
+- **Live multi-device sync** — Connect to a [VaultPeer signaling server](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode), join a room, and sync with [desktop](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop), [mobile](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile), and server nodes over WebRTC.
 - **Offline access** — Your vault works without a network connection; sync runs when peers are available.
 - **Password generator** — Generate strong random passwords and Diceware-style passphrases.
 - **OTP / TOTP** — Scan QR codes or enter secrets manually for RFC 6238 one-time passwords.
@@ -103,7 +103,7 @@ See the in-repo documentation for detailed guides:
 1. Launch VaultPeer and **create** or **open** a `.kdbx` database.
 2. Unlock with your master password (and optional key file or Windows Hello).
 3. Add entries, groups, and attachments as needed.
-4. To sync, open **Settings → Sync**, enter your signaling server URL and room ID, then connect other VaultPeer nodes using the same vault filename.
+4. To sync, open **Settings → Sync**, enter your signaling server URL and room ID (from [`VaultPeer-ServerNode`](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) / [`VaultPeer-Phonebook`](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook)), then connect other VaultPeer nodes using the same vault filename.
 
 ---
 
@@ -148,10 +148,11 @@ npm run tauri build    # produce MSI / NSIS installer (on Windows)
 | Project | Description |
 | ------- | ----------- |
 | [`VaultPeer-Desktop`](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop) | Windows desktop app (this repository) |
-| `VaultPeer-Mobile` | Mobile client for VaultPeer |
-| `VaultPeer-Server` | WebRTC signaling server used by all VaultPeer nodes |
+| [`VaultPeer-Mobile`](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile) | Mobile client for VaultPeer |
+| [`VaultPeer-ServerNode`](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) | WebRTC signaling server used by all VaultPeer nodes |
+| [`VaultPeer-Phonebook`](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook) | Phonebook / signaling service for peer discovery |
 
-> Related repositories will be linked here as they are published. VaultPeer nodes share the same signaling protocol and KDBX vault format.
+VaultPeer nodes share the same signaling protocol and KDBX vault format.
 
 ---
 

@@ -354,6 +354,8 @@ Switching templates in the creation dialog swaps the field set without losing da
 
 VaultPeer synchronizes databases directly between devices over a peer-to-peer WebRTC connection. No cloud service is involved.
 
+**Related repositories:** [VaultPeer-Desktop](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop) · [VaultPeer-Mobile](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile) · [VaultPeer-ServerNode](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) · [VaultPeer-Phonebook](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook)
+
 ### How It Works
 
 1. Both devices connect to a lightweight signaling server (configurable) to discover each other.

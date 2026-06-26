@@ -55,7 +55,7 @@ VaultPeer makes **zero network calls** during normal operation. The only network
 
 ### Peer-to-Peer Sync
 
-- Connects to a **WebSocket signaling server** (configurable URL) to discover peers.
+- Connects to a **WebSocket signaling server** (configurable URL; see [VaultPeer-ServerNode](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) and [VaultPeer-Phonebook](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook)) to discover peers.
 - Establishes a direct **WebRTC data channel** between your devices.
 - Only the **encrypted** `.kdbx` file is transmitted over the DTLS-encrypted data channel. The decrypted database never leaves the Rust backend.
 - The signaling server relays connection metadata only (room IDs, ICE candidates). It does not receive, store, or have access to your vault data.
