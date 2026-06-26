@@ -13,14 +13,71 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+ico = "0.5"
+image = { version = "0.25", default-features = false, features = ["png"] }
+dunce = "1"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
+# P2P sync signaling (Phase 8): the WebView2/WebKit WebSocket can hang or be
+# blocked by the app CSP / Windows network stack, so the signaling socket runs
+# natively in Rust via this plugin (tokio-tungstenite under the hood) and is
+# driven from the frontend through its JS API. Only the RTCPeerConnection stays
+# in the WebView.
+tauri-plugin-websocket = "2"
+# System-wide hotkeys for auto-type (PLAN Phase 6: Ctrl+Alt+A / Ctrl+Shift+A).
+# Cross-platform; the actual keystroke injection is Windows-only (see below).
+tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+# KDBX parsing/serialization (Phase 2). `save_kdbx4` enables writing databases;
+# `_merge` enables the UUID-based three-way `Database::merge` used by P2P sync
+# (Phase 8) for KeePass-compatible, history-preserving conflict resolution.
+keepass = { version = "0.13", features = ["save_kdbx4", "_merge"] }
+# Re-exported by keepass for Argon2 KDF parameters (KdfConfig::Argon2*.version).
+# The crate is published as `rust-argon2` but exposes the `argon2` module path.
+argon2 = { package = "rust-argon2", version = "3" }
+# UUID parsing for entry/group identifiers exchanged with the frontend (Phase 3).
+# Matches the major version keepass uses so GroupId/EntryId conversions line up.
+uuid = { version = "1", features = ["v4"] }
+# Timestamp conversion (NaiveDateTime -> epoch millis) for entry metadata (Phase 3).
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# TOTP (RFC 6238) code generation for OTP-enabled entries (Phase 5). HMAC over
+# SHA-1/256/512; base32 secret decoding is implemented inline in `otp.rs`.
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
+# Browser integration (Phase 9 / BRW-02): a tiny synchronous HTTP server bound to
+# localhost only, letting a browser extension request credential suggestions for
+# the current page. Minimal footprint (no async runtime), in keeping with the
+# single-small-binary goal; the server is opt-in and token-gated.
+tiny_http = "0.12"
+
+# Windows-native integration for Phase 6: auto-type keystroke injection +
+# foreground window-title matching (ATY), and a protected clipboard that
+# excludes secrets from the Windows clipboard history / cloud sync (CLP-03).
+# Scoped to the Windows target so Linux/macOS dev builds are unaffected;
+# non-Windows code paths use stubs. `enigo` synthesises keystrokes; the
+# `windows` crate reads the foreground window title and drives the clipboard.
+[target.'cfg(windows)'.dependencies]
+enigo = "0.2"
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    # "Start with Windows" toggle (PLAN Phase 7): HKCU \…\Run registry entry.
+    "Win32_System_Registry",
+    # Windows Hello quick-unlock (PLAN Phase 7): DPAPI master-password
+    # protection + the UserConsentVerifier biometric prompt.
+    "Win32_Security_Cryptography",
+    "Foundation",
+    "Security_Credentials_UI",
+] }
 
 [features]
 # This feature is used for production builds or when a dev server is not

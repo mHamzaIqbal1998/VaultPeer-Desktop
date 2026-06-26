@@ -26,13 +26,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
-    },
-    "trayIcon": {
-      "id": "main-tray",
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": false,
-      "tooltip": "VaultPeer"
+      "csp": "default-src 'self'; connect-src 'self' ws: wss: stun: stuns: turn: turns: http://localhost:1420 ws://localhost:1420; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
     }
   },
   "bundle": {
@@ -42,16 +36,21 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.icns",
       "icons/icon.ico"
     ],
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
-      }
+      },
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com"
     },
     "category": "Utility",
     "shortDescription": "KeePass-compatible password manager",
-    "longDescription": "VaultPeer is a modern, KeePass-compatible password manager for Windows with P2P sync, biometric unlock, and a premium Cyber-Sage interface."
+    "longDescription": "VaultPeer is a modern, KeePass-compatible password manager for Windows with P2P sync, biometric unlock, and a premium Cyber-Sage interface.",
+    "publisher": "VaultPeer",
+    "copyright": "Copyright (c) 2026 VaultPeer. All rights reserved.",
+    "license": "MIT"
   }
 }

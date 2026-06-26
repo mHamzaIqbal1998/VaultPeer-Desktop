@@ -108,7 +108,26 @@ cd src-tauri && cargo test
 The icon set is generated from `src-tauri/icons/source.png`:
 
 ```bash
-npm run tauri icon src-tauri/icons/source.png
+npm run icons
+```
+
+On Windows, `icon.ico` must contain **BMP-based** entries (not PNG-in-ICO) or the
+exe will keep showing an old embedded icon. Tauri also expects layers for
+16, 24, 32, 48, 64, and 256 px (32 px first). Regenerate with:
+
+```bash
+npm run icons:ico
+```
+
+`src-tauri/build.rs` emits `cargo:rerun-if-changed` for `icons/icon.ico` because
+upstream `tauri-build` does not — without that, incremental rebuilds skip
+re-embedding the icon even after you replace the file.
+
+After changing icons, do a clean rebuild so the Windows resource compiler picks
+up the new file:
+
+```bash
+cd src-tauri && cargo clean && cd .. && npm run tauri build
 ```
 
 ---

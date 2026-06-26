@@ -106,6 +106,77 @@ textarea,
   transition: background-color 200ms ease, color 200ms ease;
 }
 
+/* ── High Contrast Theme (Phase 10 / Accessibility) ──────────────── */
+:root[data-theme="high-contrast"] {
+  --color-background-primary: #000000;
+  --color-surface-card: #0a0a0a;
+  --color-surface-elevated: #111111;
+  --color-border-sage: #555555;
+  --color-accent-mint: #00ff88;
+  --color-accent-mint-dim: rgba(0, 255, 136, 0.2);
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #e5e5e5;
+  --color-text-muted: #bbbbbb;
+  --color-status-error: #ff4444;
+  --color-status-success: #00ff88;
+  --color-status-warning: #ffcc00;
+
+  color-scheme: dark;
+}
+
+/* ── DPI / Scalable UI (Phase 10 / Accessibility) ──────────────── */
+@media (min-resolution: 144dpi) {
+  html {
+    font-size: 15px;
+  }
+}
+
+@media (min-resolution: 192dpi) {
+  html {
+    font-size: 16px;
+  }
+}
+
+/* ── Focus styles for keyboard navigation (Phase 10 / A11y) ──── */
+:focus-visible {
+  outline: 2px solid var(--color-accent-mint);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+*:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Skip-to-content link for screen readers */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 999;
+  padding: 8px 16px;
+  background: var(--color-accent-mint);
+  color: var(--color-background-primary);
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 0 0 8px 0;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Custom scrollbar to match Cyber-Sage */
 ::-webkit-scrollbar {
   width: 10px;

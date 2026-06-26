@@ -10,8 +10,30 @@ pub enum AppError {
     #[error("path is not valid UTF-8")]
     NonUtf8Path,
 
+    /// The supplied master password and/or key file did not unlock the database.
+    /// Kept deliberately generic so it can't be used as a decryption oracle.
+    #[error("Invalid password or key file")]
+    InvalidCredentials,
+
+    /// No database is currently open in the vault session.
+    #[error("No database is open")]
+    NoOpenDatabase,
+
+    /// A referenced entry or group UUID does not exist (or is malformed).
+    #[error("{0}")]
+    NotFound(String),
+
+    /// A requested edit is not allowed (e.g. deleting/moving the root group).
+    #[error("{0}")]
+    InvalidOperation(String),
+
+    /// A KDBX parse/decrypt/serialize failure that isn't a wrong-credentials case
+    /// (corrupt file, unsupported version, serialization error, etc.).
+    #[error("{0}")]
+    Crypto(String),
+
     // General-purpose variant for non-I/O failures surfaced by later phases
-    // (crypto, sync, etc.). Allowed to be unused while the core is scaffolded.
+    // (sync, etc.). Allowed to be unused while the core is scaffolded.
     #[allow(dead_code)]
     #[error("{0}")]
     Other(String),
