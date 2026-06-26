@@ -396,8 +396,10 @@ A refined adaptation of the mobile Cyber-Sage aesthetic optimized for desktop in
 > Note: the WebRTC transport + WebSocket signaling run in the WebView (native,
 > cross-platform), so no `webrtc-rs` dependency is added and nothing
 > Windows-specific is introduced. The desktop speaks the **exact** VaultPeer
-> signaling + sync protocol used by the mobile app and the storage `Server-node`
-> (`WEBRTC-SERVERS/`): `{type:"join", roomId}` + `announce`/`senderId`/`targetId`
+> signaling + sync protocol used by the mobile app, the headless
+> [`VaultPeer-ServerNode`](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode)
+> peer, and Phonebook ([`VaultPeer-Phonebook`](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook))
+> as the signaling server (`WEBRTC-SERVERS/`): `{type:"join", roomId}` + `announce`/`senderId`/`targetId`
 > handshake (greater id offers), JSON data-channel messages, and the base64
 > `file_chunk_start`/`file_chunk`/`file_chunk_end` transfer with a SHA-256
 > integrity hash, plus the `metadata_query`/`metadata_info`/`pull_request`/

@@ -27,7 +27,7 @@
 
 VaultPeer is an open-source, privacy-first password manager that gives you full control over your credentials. It stores vaults in the standard **KDBX** format used by KeePass and KeePassXC, encrypts everything at rest, and keeps your data on your device.
 
-Unlike cloud-first password managers, VaultPeer syncs through a lightweight [**WebRTC signaling server**](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) and [**phonebook service**](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook). Desktop, mobile, and server nodes join a room on that server, discover each other, and exchange the encrypted `.kdbx` vault directly over a peer-to-peer data channel. The signaling server relays connection metadata only — it never sees your decrypted vault contents.
+Unlike cloud-first password managers, VaultPeer uses a [**Phonebook signaling server**](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook) for peer discovery only. Every **node** — [desktop](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop), [mobile](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile), or the headless [server node](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) — joins a room on Phonebook, discovers the other live nodes, and exchanges the encrypted `.kdbx` vault over WebRTC data channels. Phonebook relays connection metadata only; it never sees your decrypted vault contents. The server node has no UI — it holds the vault file and syncs incoming pushes and pulls with other nodes on your behalf.
 
 VaultPeer Desktop is the Windows client in that network. It unlocks and manages your vault locally, then syncs with other live nodes on startup and after local changes.
 
@@ -36,7 +36,7 @@ VaultPeer Desktop is the Windows client in that network. It unlocks and manages 
 ## Features
 
 - **KeePass-compatible storage** — Open, create, and save standard `.kdbx` databases with AES-256 / ChaCha20 encryption and Argon2 KDF.
-- **Live multi-device sync** — Connect to a [VaultPeer signaling server](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode), join a room, and sync with [desktop](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop), [mobile](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile), and server nodes over WebRTC.
+- **Live multi-device sync** — Connect to [VaultPeer-Phonebook](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook), join a room, and sync with [desktop](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop), [mobile](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile), and [headless server](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) nodes over WebRTC.
 - **Offline access** — Your vault works without a network connection; sync runs when peers are available.
 - **Password generator** — Generate strong random passwords and Diceware-style passphrases.
 - **OTP / TOTP** — Scan QR codes or enter secrets manually for RFC 6238 one-time passwords.
@@ -103,7 +103,7 @@ See the in-repo documentation for detailed guides:
 1. Launch VaultPeer and **create** or **open** a `.kdbx` database.
 2. Unlock with your master password (and optional key file or Windows Hello).
 3. Add entries, groups, and attachments as needed.
-4. To sync, open **Settings → Sync**, enter your signaling server URL and room ID (from [`VaultPeer-ServerNode`](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) / [`VaultPeer-Phonebook`](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook)), then connect other VaultPeer nodes using the same vault filename.
+4. To sync, open **Settings → Sync**, enter your Phonebook signaling server URL and room ID (from [`VaultPeer-Phonebook`](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook)), then connect other VaultPeer nodes — desktop, mobile, or headless server — using the same vault filename.
 
 ---
 
@@ -147,12 +147,12 @@ npm run tauri build    # produce MSI / NSIS installer (on Windows)
 
 | Project | Description |
 | ------- | ----------- |
-| [`VaultPeer-Desktop`](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop) | Windows desktop app (this repository) |
-| [`VaultPeer-Mobile`](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile) | Mobile client for VaultPeer |
-| [`VaultPeer-ServerNode`](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) | WebRTC signaling server used by all VaultPeer nodes |
-| [`VaultPeer-Phonebook`](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook) | Phonebook / signaling service for peer discovery |
+| [`VaultPeer-Desktop`](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop) | Windows desktop node with UI (this repository) |
+| [`VaultPeer-Mobile`](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile) | Mobile node with UI |
+| [`VaultPeer-ServerNode`](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) | Headless sync node — no UI; holds the vault and relays push/pull to other nodes |
+| [`VaultPeer-Phonebook`](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook) | WebRTC signaling server for room join and peer discovery |
 
-VaultPeer nodes share the same signaling protocol and KDBX vault format.
+All nodes share the same sync protocol and KDBX vault format. Only Phonebook handles signaling; every other component is a peer node.
 
 ---
 

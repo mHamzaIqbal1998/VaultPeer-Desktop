@@ -352,16 +352,23 @@ Switching templates in the creation dialog swaps the field set without losing da
 
 ## P2P Sync
 
-VaultPeer synchronizes databases directly between devices over a peer-to-peer WebRTC connection. No cloud service is involved.
+VaultPeer synchronizes databases between **nodes** over peer-to-peer WebRTC connections. No cloud vault service is involved.
 
-**Related repositories:** [VaultPeer-Desktop](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop) · [VaultPeer-Mobile](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile) · [VaultPeer-ServerNode](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) · [VaultPeer-Phonebook](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook)
+| Component | Role |
+| --------- | ---- |
+| [VaultPeer-Phonebook](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook) | Signaling server — rooms, peer discovery, ICE relay metadata only |
+| [VaultPeer-Desktop](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop) | Desktop node with UI (this app) |
+| [VaultPeer-Mobile](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile) | Mobile node with UI |
+| [VaultPeer-ServerNode](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) | Headless node — no UI; stores the vault and syncs push/pull with other live nodes |
 
 ### How It Works
 
-1. Both devices connect to a lightweight signaling server (configurable) to discover each other.
-2. A WebRTC data channel is established for direct, encrypted communication.
-3. The encrypted `.kdbx` file is transferred -- the decrypted database never leaves your device.
+1. Each node connects to the **Phonebook** signaling server (configurable URL) and joins the same room.
+2. Nodes discover each other through Phonebook and open WebRTC data channels.
+3. The encrypted `.kdbx` file is transferred — the decrypted database never leaves your device.
 4. On receipt, the databases are merged using KeePass-compatible merge logic (UUID-based, newer modification wins, history-preserving).
+
+A **server node** participates like any other peer: it receives vault updates from nodes that push, and forwards the latest vault to nodes that pull when they come online. It cannot edit entries through a UI.
 
 ### Setting Up Sync
 
@@ -372,7 +379,7 @@ VaultPeer synchronizes databases directly between devices over a peer-to-peer We
 
 ### QR Invites
 
-When you create a room, a QR code is displayed containing the room ID and signaling server URL. Scan it from another VaultPeer instance (desktop or mobile) to join instantly.
+When you create a room, a QR code is displayed containing the room ID and Phonebook signaling server URL. Scan it from another VaultPeer node (desktop, mobile, or server) to join instantly.
 
 ### Conflict Resolution
 
@@ -393,7 +400,7 @@ By default, VaultPeer uses Google's public STUN server. You can add custom STUN/
 
 ### Compatibility
 
-The sync protocol is shared with VaultPeer Mobile and the VaultPeer sync node. The vault filename must match across devices for peers to identify a shared database.
+The sync protocol is shared with [VaultPeer-Mobile](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile) and the headless [VaultPeer-ServerNode](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode). The vault filename must match across nodes for peers to identify a shared database.
 
 ---
 
@@ -498,7 +505,7 @@ Access settings with **Ctrl+,** or from the title bar menu.
 
 | Setting | Description |
 |---------|-------------|
-| **Signaling Server URL** | The WebSocket server used for peer discovery. |
+| **Signaling Server URL** | Phonebook WebSocket URL ([VaultPeer-Phonebook](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook)) used for room join and peer discovery. |
 | **ICE Servers** | STUN/TURN servers for WebRTC connectivity. |
 | **Auto-Sync** | Automatically rejoin the last room and push changes on save. |
 

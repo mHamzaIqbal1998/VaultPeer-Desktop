@@ -28,7 +28,7 @@ Yes. VaultPeer produces standard KDBX 4.0 files. You can open a VaultPeer databa
 
 VaultPeer makes **no network calls** by default. The only network activity occurs when you explicitly enable:
 
-- **P2P Sync** -- connects to a signaling server and peers via WebRTC.
+- **P2P Sync** — connects to the [Phonebook](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook) signaling server and syncs with other nodes via WebRTC.
 - **Browser Integration** -- runs a localhost-only HTTP server for communication with the browser extension.
 
 There is no telemetry, no analytics, and no cloud service.
@@ -37,16 +37,21 @@ There is no telemetry, no analytics, and no cloud service.
 
 ## P2P Sync
 
-**Related repositories:** [VaultPeer-Desktop](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop) · [VaultPeer-Mobile](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile) · [VaultPeer-ServerNode](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) · [VaultPeer-Phonebook](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook)
+| Component | Role |
+| --------- | ---- |
+| [VaultPeer-Phonebook](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook) | Signaling server — peer discovery only |
+| [VaultPeer-Desktop](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop) | Desktop node with UI |
+| [VaultPeer-Mobile](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile) | Mobile node with UI |
+| [VaultPeer-ServerNode](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) | Headless node — holds the vault and relays sync to other nodes |
 
 ### How does P2P sync work?
 
-1. Both devices connect to a lightweight WebSocket signaling server to discover each other.
-2. A direct WebRTC data channel is established between the peers.
+1. Each node connects to the **Phonebook** WebSocket signaling server and joins the same room.
+2. Nodes discover each other and open direct WebRTC data channels.
 3. The **encrypted** `.kdbx` file is transferred over the DTLS-encrypted data channel. The decrypted database never leaves your device.
 4. On receipt, the databases are merged using KeePass-compatible merge logic.
 
-No cloud storage is involved. The signaling server only relays connection metadata -- it never sees your vault data.
+No cloud vault is involved. Phonebook relays connection metadata only — it never sees your vault data. The server node is a peer like desktop and mobile, but headless: it stores the vault file and syncs pushes and pulls with other nodes without a UI.
 
 ### What happens if there is a sync conflict?
 

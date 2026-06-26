@@ -55,10 +55,11 @@ VaultPeer makes **zero network calls** during normal operation. The only network
 
 ### Peer-to-Peer Sync
 
-- Connects to a **WebSocket signaling server** (configurable URL; see [VaultPeer-ServerNode](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode) and [VaultPeer-Phonebook](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook)) to discover peers.
-- Establishes a direct **WebRTC data channel** between your devices.
+- Connects to the [**Phonebook**](https://github.com/mHamzaIqbal1998/VaultPeer-Phonebook) WebSocket signaling server (configurable URL) so nodes can join rooms and discover each other.
+- Establishes direct **WebRTC data channels** between peer nodes ([desktop](https://github.com/mHamzaIqbal1998/VaultPeer-Desktop), [mobile](https://github.com/mHamzaIqbal1998/VaultPeer-Mobile), [server node](https://github.com/mHamzaIqbal1998/VaultPeer-ServerNode)).
 - Only the **encrypted** `.kdbx` file is transmitted over the DTLS-encrypted data channel. The decrypted database never leaves the Rust backend.
-- The signaling server relays connection metadata only (room IDs, ICE candidates). It does not receive, store, or have access to your vault data.
+- Phonebook relays connection metadata only (room IDs, ICE candidates). It does not receive, store, or have access to your vault data.
+- The headless **server node** is a peer, not a signaling service — it holds the vault file and participates in push/pull sync like other nodes.
 - Sync is disabled by default and must be explicitly activated.
 
 ### Browser Integration

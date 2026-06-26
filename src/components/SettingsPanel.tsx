@@ -935,9 +935,9 @@ function SyncTab() {
 
       <Section title="Signaling server">
         <p className="text-xs text-text-muted">
-          P2P sync exchanges connection details through a WebSocket signaling
-          server, then transfers the encrypted vault directly between devices.
-          Use the same server URL as your VaultPeer mobile app.
+          P2P sync uses VaultPeer-Phonebook as the WebSocket signaling server for
+          room join and peer discovery, then transfers the encrypted vault
+          directly between nodes (desktop, mobile, or headless server).
         </p>
         <input
           type="text"
