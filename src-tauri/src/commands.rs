@@ -16,7 +16,7 @@ use crate::database::{
     HistoryItem, MaintenanceReport,
 };
 use crate::error::{AppError, AppResult};
-use crate::fs_ops::{self, FileMeta};
+use crate::fs_ops::{self, DirEntry, FileMeta};
 use crate::import::{self, ColumnMapping, CsvPreview, ImportReport};
 use crate::otp::{self, TotpCode};
 use crate::search::{self, SearchFilters, SearchHit};
@@ -54,6 +54,22 @@ pub fn stat_file(path: String) -> AppResult<FileMeta> {
 #[tauri::command]
 pub fn set_file_mtime(path: String, mtime_ms: f64) -> AppResult<()> {
     fs_ops::set_file_mtime(&PathBuf::from(path), mtime_ms.max(0.0) as u64)
+}
+
+/// List the immediate children of a directory (non-recursive). Used by the
+/// backup retention pruner to enumerate existing `<filename>.<ts>.bak`
+/// revisions in the user's chosen backup folder.
+#[tauri::command]
+pub fn list_dir(path: String) -> AppResult<Vec<DirEntry>> {
+    fs_ops::list_dir(&PathBuf::from(path))
+}
+
+/// Delete a file. Missing files are treated as success so the backup pruner
+/// doesn't choke on a file that disappeared between the `list_dir` and the
+/// `remove_file`.
+#[tauri::command]
+pub fn delete_file(path: String) -> AppResult<()> {
+    fs_ops::delete_file(&PathBuf::from(path))
 }
 
 // ── Phase 8: persisted P2P sync version clock ─────────────────────────────────
