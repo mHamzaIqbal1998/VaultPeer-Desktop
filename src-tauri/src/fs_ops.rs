@@ -60,6 +60,45 @@ pub fn set_file_mtime(path: &Path, mtime_ms: u64) -> AppResult<()> {
     Ok(())
 }
 
+/// One entry returned by [`list_dir`].
+#[derive(Debug, Clone, Serialize)]
+pub struct DirEntry {
+    /// Entry name (no path). For `vault.kdbx.1718870400000.bak` this is the
+    /// full backup filename the pruner parses the timestamp out of.
+    pub name: String,
+    /// Absolute path to the entry, suitable for `read_file` / `remove_file`.
+    pub path: String,
+}
+
+/// List the immediate children of a directory (non-recursive). Used by the
+/// backup pruner to enumerate existing `<filename>.<ts>.bak` revisions in the
+/// user's chosen backup folder. Errors if the directory doesn't exist.
+pub fn list_dir(dir: &Path) -> AppResult<Vec<DirEntry>> {
+    let mut out = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry
+            .path()
+            .to_str()
+            .ok_or(AppError::NonUtf8Path)?
+            .to_string();
+        out.push(DirEntry { name, path });
+    }
+    Ok(out)
+}
+
+/// Delete a file. Missing files are treated as success (idempotent) so the
+/// backup pruner doesn't choke on a file that disappeared between the
+/// `list_dir` and the `remove_file`.
+pub fn delete_file(path: &Path) -> AppResult<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Build the path of the temporary file used during an atomic write.
 /// Lives in the same directory as the destination so the final `rename` stays
 /// within one filesystem (a cross-device rename would fail / be non-atomic).

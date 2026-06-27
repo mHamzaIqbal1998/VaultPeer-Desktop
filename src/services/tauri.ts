@@ -725,6 +725,18 @@ export interface SyncConfig {
   autoSync: boolean;
 }
 
+/** Persisted vault backup retention settings (mirrors Rust `BackupConfig`). */
+export interface BackupConfig {
+  /** Whether backups are taken on each newer pull. */
+  enabled: boolean;
+  /** Number of previous revisions to retain (clamped 1..=50 by the UI). */
+  retention: number;
+  /** Destination directory for backups (absolute path), or empty if unset. */
+  dir: string;
+  /** Human-friendly directory name for display, or empty if unset. */
+  dirName: string;
+}
+
 /** All persisted application settings (mirrors Rust `AppSettings`). */
 export interface AppSettings {
   version: number;
@@ -739,6 +751,8 @@ export interface AppSettings {
   defaultCreateOptions: CreateOptions;
   shortcuts: ShortcutBindings;
   sync: SyncConfig;
+  /** Vault backup retention on pull (mirrors mobile/server node). */
+  backup: BackupConfig;
 }
 
 /** Recycle-bin / history-retention settings of the open DB (Rust `DbMetaSettings`). */
@@ -884,6 +898,24 @@ export async function statFile(path: string): Promise<FileMeta> {
 /** Set a file's last-modified time (epoch ms) — used by P2P sync. */
 export async function setFileMtime(path: string, mtimeMs: number): Promise<void> {
   await invoke("set_file_mtime", { path, mtimeMs });
+}
+
+/** One entry returned by `listDir`. */
+export interface DirEntry {
+  /** Entry name (no path). */
+  name: string;
+  /** Absolute path to the entry. */
+  path: string;
+}
+
+/** List the immediate children of a directory (non-recursive). */
+export async function listDir(path: string): Promise<DirEntry[]> {
+  return invoke<DirEntry[]>("list_dir", { path });
+}
+
+/** Delete a file. Missing files are treated as success (idempotent). */
+export async function deleteFile(path: string): Promise<void> {
+  await invoke("delete_file", { path });
 }
 
 /** Read the remembered converged sync version (epoch ms) for a vault filename. */

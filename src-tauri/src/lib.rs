@@ -168,6 +168,8 @@ pub fn run() {
             commands::write_file,
             commands::stat_file,
             commands::set_file_mtime,
+            commands::list_dir,
+            commands::delete_file,
             commands::sync_get_mtime,
             commands::sync_set_mtime,
             commands::unlock_database,

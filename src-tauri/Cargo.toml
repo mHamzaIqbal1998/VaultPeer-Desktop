@@ -1,6 +1,6 @@
 [package]
 name = "vaultpeer-desktop"
-version = "1.0.0"
+version = "1.0.1"
 description = "VaultPeer Desktop — open-source KeePass-compatible password manager with WebRTC sync"
 authors = ["VaultPeer Contributors"]
 license = "Apache-2.0"

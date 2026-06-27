@@ -15,11 +15,12 @@ fn main() {
         println!("cargo:rerun-if-changed={rel}");
     }
 
-    // Always regenerate icon.ico from source.png using the same `ico` crate
-    // Tauri uses at runtime. Hand-edited or PNG-in-ICO files are rejected by
-    // MSVC's rc.exe / windres, leaving a stale icon embedded in the .exe.
+    // Regenerate icon.ico from source.png only when the source is newer than
+    // the generated file. Always rewriting it makes Tauri dev's file watcher
+    // see icon.ico as changed mid-build, restarting cargo in a loop before the
+    // (slow) `windows` crate can finish compiling.
     if source.exists() {
-        regenerate_icon_ico(&source, &icon_path);
+        regenerate_icon_ico_if_stale(&source, &icon_path);
     }
 
     // Explorer picks the icon resource with the lowest numeric ID. Tauri embeds
@@ -31,6 +32,20 @@ fn main() {
 
     let attrs = tauri_build::Attributes::new().windows_attributes(windows);
     tauri_build::try_build(attrs).expect("failed to run build script");
+}
+
+fn regenerate_icon_ico_if_stale(source: &std::path::Path, out: &std::path::Path) {
+    // Skip the rewrite when the output already exists and is at least as new as
+    // the source PNG — so a steady-state build doesn't touch icon.ico and trip
+    // Tauri dev's watcher into a rebuild loop.
+    if let (Ok(src_meta), Ok(out_meta)) = (std::fs::metadata(source), std::fs::metadata(out)) {
+        if let (Ok(src_mtime), Ok(out_mtime)) = (src_meta.modified(), out_meta.modified()) {
+            if out_mtime >= src_mtime {
+                return;
+            }
+        }
+    }
+    regenerate_icon_ico(source, out);
 }
 
 fn regenerate_icon_ico(source: &std::path::Path, out: &std::path::Path) {

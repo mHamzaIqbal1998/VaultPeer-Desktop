@@ -83,6 +83,35 @@ impl Default for ShortcutBindings {
     }
 }
 
+/// Vault backup retention settings (mirrors the mobile/server-node behavior).
+/// When a newer vault is pulled from a peer and overwrites the local file, the
+/// previous revision is copied into `dir` as `<filename>.<mtime>.bak`, and old
+/// revisions are pruned down to `retention`. The latest file always keeps the
+/// original vault filename — only retained backups are renamed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BackupConfig {
+    /// Whether backups are taken on each newer pull.
+    pub enabled: bool,
+    /// Number of previous revisions to retain (clamped to 1..=50 by the UI).
+    pub retention: u32,
+    /// Destination directory for backups (absolute path), or empty if unset.
+    pub dir: String,
+    /// Human-friendly directory name for display, or empty if unset.
+    pub dir_name: String,
+}
+
+impl Default for BackupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            retention: 3,
+            dir: String::new(),
+            dir_name: String::new(),
+        }
+    }
+}
+
 /// All persisted application settings (PRD §3.9 / SET-01..11). Serialized as
 /// camelCase JSON; every field has a default so older files migrate cleanly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +138,8 @@ pub struct AppSettings {
     pub shortcuts: ShortcutBindings,
     /// P2P synchronization configuration (signaling URL, ICE servers).
     pub sync: SyncConfig,
+    /// Vault backup retention on pull (mirrors mobile/server node).
+    pub backup: BackupConfig,
 }
 
 impl Default for AppSettings {
@@ -124,6 +155,7 @@ impl Default for AppSettings {
             default_create_options: CreateOptions::default(),
             shortcuts: ShortcutBindings::default(),
             sync: SyncConfig::default(),
+            backup: BackupConfig::default(),
         }
     }
 }

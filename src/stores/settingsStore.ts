@@ -45,6 +45,12 @@ const DEFAULT_SETTINGS: AppSettings = {
     room: "",
     autoSync: false,
   },
+  backup: {
+    enabled: false,
+    retention: 3,
+    dir: "",
+    dirName: "",
+  },
 };
 
 interface SettingsState {

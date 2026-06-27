@@ -30,7 +30,13 @@ import {
   type ShortcutBindings,
 } from "@/services/tauri";
 import { captureAccelerator } from "@/lib/shortcuts";
+import {
+  clampRetention,
+  MAX_BACKUP_RETENTION,
+  MIN_BACKUP_RETENTION,
+} from "@/lib/backup";
 import { PasswordField } from "./PasswordField";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 type Tab = "app" | "database" | "security" | "sync" | "browser";
 
@@ -896,7 +902,10 @@ const DEFAULT_STUN = "stun:stun.l.google.com:19302";
 
 function SyncTab() {
   const sync = useSettingsStore((s) => s.settings.sync);
+  const backup = useSettingsStore((s) => s.settings.backup);
   const update = useSettingsStore((s) => s.update);
+  const [folderError, setFolderError] = useState<string | null>(null);
+  const [confirmClearFolder, setConfirmClearFolder] = useState(false);
 
   const setSignalingUrl = (signalingUrl: string) =>
     void update({ sync: { ...sync, signalingUrl } });
@@ -909,6 +918,57 @@ function SyncTab() {
 
   const removeIce = (index: number) =>
     setIce(sync.iceServers.filter((_, i) => i !== index));
+
+  // ── Backup retention handlers ──
+
+  // Read the live backup settings from the store on every patch instead of
+  // spreading a render-scope `backup` — otherwise a chained patch (e.g. the
+  // toggle-on flow that sets the dir, then flips enabled in a `.then`) can
+  // stomp the just-written dir with the stale empty value from the older
+  // render's closure.
+  const patchBackup = (patch: Partial<typeof backup>) => {
+    const current = useSettingsStore.getState().settings.backup;
+    void update({ backup: { ...current, ...patch } });
+  };
+
+  async function handlePickBackupDir() {
+    setFolderError(null);
+    try {
+      const dir = await openDirectoryDialog("Choose a folder to store vault backups");
+      if (!dir) return;
+      // Use the last path segment as a friendly display name; falls back to the
+      // full path on edge cases (root paths, trailing separators).
+      const seg = dir.split(/[\\/]/).filter(Boolean).pop();
+      patchBackup({ dir, dirName: seg ?? dir });
+    } catch (e) {
+      setFolderError(String(e));
+    }
+  }
+
+  function handleToggleBackup(enabled: boolean) {
+    // Enabling requires a destination folder; prompt for one if missing.
+    if (enabled && !backup.dir) {
+      void handlePickBackupDir().then(() => {
+        // If the picker succeeded, the store now has a dir — flip enabled on.
+        if (useSettingsStore.getState().settings.backup.dir) {
+          patchBackup({ enabled: true });
+        }
+      });
+      return;
+    }
+    patchBackup({ enabled });
+  }
+
+  function handleChangeRetention(delta: number) {
+    patchBackup({ retention: clampRetention(backup.retention + delta) });
+  }
+
+  function handleClearBackupDir() {
+    // Disable backups and forget the folder; existing backup files on disk are
+    // left alone (matching the mobile behavior).
+    patchBackup({ enabled: false, dir: "", dirName: "" });
+    setConfirmClearFolder(false);
+  }
 
   const inputCls =
     "w-full rounded-lg border border-border-sage bg-background-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent-mint/50";
@@ -1034,6 +1094,88 @@ function SyncTab() {
           </button>
         </div>
       </Section>
+
+      <Section title="Vault backups">
+        <p className="text-xs text-text-muted">
+          Keep previous versions when a newer vault is pulled from a peer. Before
+          each pull overwrites the local vault, the current revision is copied
+          into your chosen folder as{" "}
+          <code className="font-mono">&lt;filename&gt;.&lt;timestamp&gt;.bak</code>;
+          the latest file always keeps the original name.
+        </p>
+        <ToggleRow
+          label="Backup on sync"
+          hint="Preserve the previous revision whenever a peer's vault is pulled in."
+          checked={backup.enabled}
+          onChange={handleToggleBackup}
+        />
+        <Row
+          label="Backup folder"
+          hint={backup.dir ? "Where retained versions are stored" : "Choose a folder to store backups"}
+        >
+          <button
+            type="button"
+            onClick={handlePickBackupDir}
+            className="max-w-56 truncate rounded-lg border border-border-sage bg-background-primary px-3 py-1.5 text-xs text-text-primary transition-colors hover:border-accent-mint/40"
+            title={backup.dir || "Not set"}
+          >
+            {backup.dirName || (backup.dir ? "Selected" : "Not set")}
+          </button>
+        </Row>
+        {backup.dir && (
+          <button
+            type="button"
+            onClick={() => setConfirmClearFolder(true)}
+            className="rounded-md border border-status-error/40 px-2.5 py-1 text-[11px] font-medium text-status-error transition-colors hover:bg-status-error/10"
+          >
+            Remove folder
+          </button>
+        )}
+        <Row
+          label="Backups to keep"
+          hint="Oldest versions beyond this are removed."
+        >
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleChangeRetention(-1)}
+              disabled={backup.retention <= MIN_BACKUP_RETENTION}
+              aria-label="Decrease retention"
+              className="grid h-7 w-7 place-items-center rounded-md border border-border-sage text-text-primary transition-colors hover:border-accent-mint/40 disabled:opacity-40"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+            <span className="w-8 text-center font-mono text-sm text-text-primary">
+              {backup.retention}
+            </span>
+            <button
+              type="button"
+              onClick={() => handleChangeRetention(1)}
+              disabled={backup.retention >= MAX_BACKUP_RETENTION}
+              aria-label="Increase retention"
+              className="grid h-7 w-7 place-items-center rounded-md border border-border-sage text-text-primary transition-colors hover:border-accent-mint/40 disabled:opacity-40"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+        </Row>
+        {folderError && <p className="text-xs text-status-error">{folderError}</p>}
+      </Section>
+
+      {confirmClearFolder && (
+        <ConfirmDialog
+          title="Remove backup folder"
+          message="Backups will be turned off until you choose a new folder. Existing backup files will not be deleted."
+          confirmLabel="Remove"
+          destructive
+          onConfirm={handleClearBackupDir}
+          onCancel={() => setConfirmClearFolder(false)}
+        />
+      )}
     </div>
   );
 }

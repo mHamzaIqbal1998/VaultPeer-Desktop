@@ -7,10 +7,12 @@ import {
   syncGetMtime,
   syncMergeSnapshot,
   syncSetMtime,
+  readFile,
   type MergeResult,
 } from "@/services/tauri";
 import { SyncSession, type SyncProgress, type SyncStatus } from "@/lib/webrtc";
 import { generateRoomId } from "@/lib/qr";
+import { backupPulledRevision } from "@/lib/backup";
 import { useSettingsStore } from "./settingsStore";
 import { useSessionStore } from "./sessionStore";
 import { useDatabaseStore } from "./databaseStore";
@@ -141,6 +143,11 @@ export const useSyncStore = create<SyncState>((set, get) => {
       const result = await syncMergeSnapshot(bytes);
       let lastModified: number;
       if (result.changed) {
+        // Before the merged vault overwrites the on-disk file, preserve the
+        // current revision into the user's backup folder (best-effort, mirrors
+        // the mobile app and the server node). Done inside `result.changed`
+        // because a no-op merge leaves the file untouched.
+        await backupCurrentRevision(filename);
         // The merge produced a genuinely new version both sides converge to.
         await saveDatabase();
         useSessionStore.getState().setDirty(false);
@@ -160,6 +167,33 @@ export const useSyncStore = create<SyncState>((set, get) => {
       await syncSetMtime(filename, lastModified).catch(() => {});
       await setFileMtime(metadata.path, lastModified).catch(() => {});
       return { changed: result.changed, lastModified, result };
+    };
+
+    /**
+     * Copy the revision currently on disk into the user's backup directory
+     * before it is overwritten by a pulled/remote file (mirrors the server
+     * node's retention-on-pull). Best-effort: never throws and never blocks
+     * the pull.
+     */
+    const backupCurrentRevision = async (filename: string) => {
+      try {
+        // Cheap gate so we don't read the whole file when backups are off.
+        const { backup } = useSettingsStore.getState().settings;
+        if (!backup.enabled || !backup.dir || backup.retention <= 0) return;
+
+        const oldBytes = await readFile(metadata.path).catch(() => null);
+        if (!oldBytes) return;
+        // Prefer the persisted logical version (the converged clock); fall back
+        // to the filesystem mtime when we never recorded one (first pull).
+        const known = await syncGetMtime(filename).catch(() => 0);
+        const oldMtime =
+          known > 0
+            ? known
+            : (await statFile(metadata.path).catch(() => null))?.modified ?? Date.now();
+        await backupPulledRevision(filename, oldBytes, oldMtime);
+      } catch (e) {
+        console.warn("[sync] backupCurrentRevision failed:", e);
+      }
     };
 
     const session = new SyncSession(
