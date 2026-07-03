@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   clipboardClearSeconds: 30,
   minimizeToTray: true,
   startWithWindows: false,
+  autoSave: false,
   generator: {
     length: 20,
     uppercase: true,
