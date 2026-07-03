@@ -18,6 +18,7 @@ import { ENTRY_TEMPLATES, type EntryTemplate } from "@/lib/templates";
 import { PasswordField } from "./PasswordField";
 import { StrengthMeter } from "./StrengthMeter";
 import { IconPicker } from "./IconPicker";
+import { GroupPicker } from "./GroupPicker";
 import { PasswordGeneratorPopover } from "./PasswordGeneratorPopover";
 import { OtpEditor } from "./OtpEditor";
 import { TagInput } from "./TagInput";
@@ -65,11 +66,13 @@ function fromLocalInput(value: string): number | null {
 export function EntryEditor({ entry, groupUuid, onClose }: Props) {
   const createEntry = useDatabaseStore((s) => s.createEntry);
   const updateEntry = useDatabaseStore((s) => s.updateEntry);
+  const moveEntry = useDatabaseStore((s) => s.moveEntry);
   const refreshEntries = useDatabaseStore((s) => s.refreshEntries);
   const knownTags = useDatabaseStore((s) => s.tags);
   const setDirty = useSessionStore((s) => s.setDirty);
 
   const isEdit = entry !== null;
+  const [targetGroupUuid, setTargetGroupUuid] = useState(groupUuid);
   const [form, setForm] = useState<EntryInput>(
     entry ? inputFromDetail(entry) : { ...EMPTY_ENTRY_INPUT },
   );
@@ -184,8 +187,12 @@ export function EntryEditor({ entry, groupUuid, onClose }: Props) {
     try {
       if (isEdit && entry) {
         await updateEntry(entry.uuid, cleaned);
+        // Move entry if the user changed its group.
+        if (targetGroupUuid !== groupUuid) {
+          await moveEntry(entry.uuid, targetGroupUuid);
+        }
       } else {
-        const uuid = await createEntry(groupUuid, cleaned);
+        const uuid = await createEntry(targetGroupUuid, cleaned);
         // Commit any files staged before the entry existed.
         for (const p of pending) {
           await addAttachment(uuid, p.name, p.data);
@@ -265,6 +272,8 @@ export function EntryEditor({ entry, groupUuid, onClose }: Props) {
               </Field>
             </div>
           </div>
+
+          <GroupPicker value={targetGroupUuid} onChange={setTargetGroupUuid} />
 
           <Field label="Username">
             <input

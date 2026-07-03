@@ -747,6 +747,8 @@ export interface AppSettings {
   clipboardClearSeconds: number;
   minimizeToTray: boolean;
   startWithWindows: boolean;
+  /** Automatically save after every change (same as pressing Save). */
+  autoSave: boolean;
   generator: GeneratorDefaults;
   defaultCreateOptions: CreateOptions;
   shortcuts: ShortcutBindings;

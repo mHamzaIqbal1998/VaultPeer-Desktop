@@ -108,6 +108,17 @@ export function MainLayout() {
     }
   }
 
+  // Auto-save: when enabled, save shortly after the dirty flag is set.
+  // Uses a debounce so rapid edits batch into a single write.
+  const autoSave = useSettingsStore((s) => s.settings.autoSave);
+  useEffect(() => {
+    if (!autoSave || !dirty || saving) return;
+    const timer = setTimeout(() => {
+      void handleSave();
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [autoSave, dirty, saving]);
+
   if (!metadata) return null;
 
   return (

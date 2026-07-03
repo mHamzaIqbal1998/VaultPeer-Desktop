@@ -209,6 +209,12 @@ function AppTab() {
 
       <Section title="Window & startup">
         <ToggleRow
+          label="Auto-save"
+          hint="Automatically save the database after every change."
+          checked={settings.autoSave}
+          onChange={(v) => update({ autoSave: v })}
+        />
+        <ToggleRow
           label="Minimize to tray on close"
           hint="Keep running in the tray instead of quitting."
           checked={settings.minimizeToTray}
