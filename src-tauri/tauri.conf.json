@@ -22,7 +22,8 @@
         "decorations": false,
         "transparent": false,
         "center": true,
-        "theme": "Dark"
+        "theme": "Dark",
+        "visible": false
       }
     ],
     "security": {

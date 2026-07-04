@@ -130,6 +130,8 @@ pub struct AppSettings {
     pub minimize_to_tray: bool,
     /// Launch VaultPeer when the user signs in to Windows.
     pub start_with_windows: bool,
+    /// Start with the window hidden (minimized to tray) on launch.
+    pub start_minimized: bool,
     /// Default password-generator preferences.
     pub generator: GeneratorDefaults,
     /// Default encryption settings pre-filled when creating a new database.
@@ -151,6 +153,7 @@ impl Default for AppSettings {
             clipboard_clear_seconds: 30,
             minimize_to_tray: true,
             start_with_windows: false,
+            start_minimized: false,
             generator: GeneratorDefaults::default(),
             default_create_options: CreateOptions::default(),
             shortcuts: ShortcutBindings::default(),
