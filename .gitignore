@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 WEBRTC-SERVERS/
+graphify-out/
 .claude/
 # Build output
 dist/

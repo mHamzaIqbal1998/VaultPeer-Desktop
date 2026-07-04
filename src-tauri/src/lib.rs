@@ -113,10 +113,22 @@ pub fn run() {
             // Load persisted settings into the managed state so the close
             // handler and commands can read them without hitting disk (Phase 7).
             let loaded = settings::load(app.handle());
+            let start_minimized = loaded.start_minimized;
             *app.state::<SettingsState>()
                 .0
                 .lock()
                 .expect("settings mutex poisoned") = loaded;
+
+            // The window starts hidden (visible:false in tauri.conf.json) to
+            // avoid a flash. Show it now unless "Start minimized" is enabled,
+            // in which case the app stays in the tray silently.
+            if !start_minimized {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+
             // Restore the browser-integration HTTP server if it was running in
             // the previous session (same port + token, no reconfiguration needed).
             browser::auto_start_from_config(app.handle());

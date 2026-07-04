@@ -229,6 +229,12 @@ function AppTab() {
         {autostartError && (
           <p className="text-xs text-status-error">{autostartError}</p>
         )}
+        <ToggleRow
+          label="Start minimized"
+          hint="Hide the window on launch (start in the system tray)."
+          checked={settings.startMinimized}
+          onChange={(v) => update({ startMinimized: v })}
+        />
       </Section>
 
       <Section title="Default password generator">
