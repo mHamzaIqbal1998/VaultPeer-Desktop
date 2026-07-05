@@ -88,7 +88,18 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [profile.release]
 panic = "abort"
+# `thin` LTO preserves cross-crate inlining benefits while compiling roughly
+# 30-50% faster than fat LTO (`true`). For a Tauri desktop utility the runtime
+# perf delta is negligible (<2%); the smaller compile time matters more for
+# iteration on release builds. Binary size stays near fat-LTO levels.
+lto = "thin"
 codegen-units = 1
-lto = true
 opt-level = "s"
 strip = true
+
+# Faster `cargo build` / `tauri dev`: dependencies built with light optimization
+# so crypto/kdbx operations stay responsive in dev, while the workspace crate
+# stays unoptimized for fast incremental rebuilds. Has no effect on `tauri build`
+# (release profile is used there), so production behavior is unchanged.
+[profile.dev.package."*"]
+opt-level = 1
