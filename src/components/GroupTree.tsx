@@ -132,7 +132,7 @@ export function GroupTree() {
             )}
           </button>
 
-          <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/row:opacity-100">
+          <div className="flex w-[72px] shrink-0 items-center justify-end opacity-0 transition-opacity group-hover/row:opacity-100">
             {node.isRecycleBin ? (
               <RowButton
                 label="Empty recycle bin"
