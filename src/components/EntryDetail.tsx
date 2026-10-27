@@ -18,6 +18,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { VaultIcon } from "@/lib/icons";
 import { copyToClipboard } from "@/lib/clipboard";
 import { tagColor } from "@/lib/tags";
+import { pwnedPasswordCount } from "@/lib/pwned";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { HistoryPanel } from "./HistoryPanel";
 import { OtpCard } from "./OtpCard";
@@ -26,6 +27,14 @@ interface Props {
   /** Open the editor for this entry. */
   onEdit: (entry: EntryDetailData) => void;
 }
+
+/** State of the "Have I Been Pwned?" breach check for the viewed entry's password. */
+type PwnedState =
+  | { status: "idle" }
+  | { status: "checking" }
+  | { status: "safe" }
+  | { status: "pwned"; count: number }
+  | { status: "error"; message: string };
 
 /** Strip the directory part from a file path (handles both \ and /). */
 function basename(path: string): string {
@@ -67,6 +76,7 @@ export function EntryDetail({ onEdit }: Props) {
   const [attachBusy, setAttachBusy] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [autoTypeError, setAutoTypeError] = useState<string | null>(null);
+  const [pwned, setPwned] = useState<PwnedState>({ status: "idle" });
 
   async function reload() {
     if (!selectedEntryUuid) return;
@@ -82,6 +92,7 @@ export function EntryDetail({ onEdit }: Props) {
     setRevealedFields(new Set());
     setCopied(null);
     setAttachError(null);
+    setPwned({ status: "idle" });
     if (!selectedEntryUuid) {
       setDetail(null);
       return;
@@ -161,6 +172,27 @@ export function EntryDetail({ onEdit }: Props) {
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
+  }
+
+  /**
+   * "Have I Been Pwned?" breach check for the entry's password. k-anonymity:
+   * only the first 5 hex chars of the SHA-1 digest are sent to the API; the
+   * password itself never leaves the device.
+   */
+  async function handlePwnedCheck() {
+    if (!detail?.password || pwned.status === "checking") return;
+    setPwned({ status: "checking" });
+    try {
+      const count = await pwnedPasswordCount(detail.password);
+      // Ignore the result if the entry changed while the request was in flight.
+      if (selectedEntryUuid === detail.uuid) {
+        setPwned(count > 0 ? { status: "pwned", count } : { status: "safe" });
+      }
+    } catch (e) {
+      if (selectedEntryUuid === detail.uuid) {
+        setPwned({ status: "error", message: String(e) });
+      }
+    }
   }
 
   const expiryState = detail?.expires && detail.expiry != null
@@ -256,6 +288,51 @@ export function EntryDetail({ onEdit }: Props) {
             <div className="rounded-lg border border-border-sage bg-background-primary px-3 py-2 font-mono text-sm text-text-primary">
               {detail.password ? (reveal ? detail.password : "•".repeat(Math.min(detail.password.length, 24))) : <span className="text-text-muted">—</span>}
             </div>
+            {detail.password && (
+              <div className="mt-1.5 space-y-2">
+                <button
+                  type="button"
+                  onClick={handlePwnedCheck}
+                  disabled={pwned.status === "checking"}
+                  aria-label="Check password against known data breaches"
+                  title="Check this password against known data breaches (k-anonymity: only the SHA-1 prefix is sent)"
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border-sage px-3 py-2 text-xs text-text-secondary transition-colors hover:border-accent-mint/40 hover:text-accent-mint disabled:opacity-50"
+                >
+                  {pwned.status === "checking" ? (
+                    <>
+                      <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" opacity="0.25" />
+                        <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                      </svg>
+                      Checking breach databases…
+                    </>
+                  ) : (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <path d="M12 3 5 6v5c0 4.5 3 8.5 7 10 4-1.5 7-5.5 7-10V6l-7-3Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+                        <path d="m9.5 12 1.8 1.8 3.7-3.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      Have I Been Pwned?
+                    </>
+                  )}
+                </button>
+                {pwned.status === "pwned" && (
+                  <div className="rounded-lg border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs font-medium text-status-error">
+                    This password was found {pwned.count === 1 ? "1 time" : `${pwned.count.toLocaleString()} times`} in known data breaches — you should change it.
+                  </div>
+                )}
+                {pwned.status === "safe" && (
+                  <div className="rounded-lg border border-status-success/40 bg-status-success/10 px-3 py-2 text-xs font-medium text-status-success">
+                    This password was NOT found in any known data breaches — carry on!
+                  </div>
+                )}
+                {pwned.status === "error" && (
+                  <div className="rounded-lg border border-status-error/40 bg-status-error/10 px-2.5 py-1.5 text-xs text-status-error">
+                    Breach check failed: {pwned.message}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {detail.otp && <OtpCard otp={detail.otp} />}

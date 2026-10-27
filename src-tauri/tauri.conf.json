@@ -27,7 +27,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ws: wss: stun: stuns: turn: turns: http://localhost:1420 ws://localhost:1420; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
+      "csp": "default-src 'self'; connect-src 'self' ws: wss: stun: stuns: turn: turns: http://localhost:1420 ws://localhost:1420 https://api.pwnedpasswords.com; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
     }
   },
   "bundle": {
