@@ -285,7 +285,7 @@ export function EntryDetail({ onEdit }: Props) {
                 </IconAction>
               </div>
             </div>
-            <div className="rounded-lg border border-border-sage bg-background-primary px-3 py-2 font-mono text-sm text-text-primary">
+            <div className="break-all rounded-lg border border-border-sage bg-background-primary px-3 py-2 font-mono text-sm text-text-primary">
               {detail.password ? (reveal ? detail.password : "•".repeat(Math.min(detail.password.length, 24))) : <span className="text-text-muted">—</span>}
             </div>
             {detail.password && (

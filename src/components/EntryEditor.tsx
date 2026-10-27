@@ -400,14 +400,47 @@ export function EntryEditor({ entry, groupUuid, onClose }: Props) {
             ) : (
               <div className="space-y-2">
                 {form.customFields.map((cf, i) => (
-                  <div key={i} className="flex items-start gap-1.5">
-                    <input
-                      value={cf.key}
-                      onChange={(e) => setCustomField(i, { key: e.target.value })}
-                      placeholder="Name"
-                      className={`${inputCls} w-1/3 py-2`}
-                    />
-                    <div className="flex-1">
+                  <div key={i} className="space-y-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        value={cf.key}
+                        onChange={(e) => setCustomField(i, { key: e.target.value })}
+                        placeholder="Name"
+                        className={`${inputCls} flex-1 py-2`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setCustomField(i, { protected: !cf.protected })}
+                        aria-label={cf.protected ? "Unprotect field" : "Protect field"}
+                        title={cf.protected ? "Protected (masked)" : "Plain text"}
+                        className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg border transition-colors ${
+                          cf.protected
+                            ? "border-accent-mint/50 text-accent-mint"
+                            : "border-border-sage text-text-muted hover:text-text-secondary"
+                        }`}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                          <rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" strokeWidth="1.8" />
+                          <path
+                            d="M8 11V8a4 4 0 0 1 8 0v3"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeCustomField(i)}
+                        aria-label="Remove field"
+                        className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border-sage text-text-muted transition-colors hover:border-status-error/50 hover:text-status-error"
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                          <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        </svg>
+                      </button>
+                    </div>
+                    <div>
                       {cf.protected ? (
                         <PasswordField
                           value={cf.value}
@@ -423,37 +456,6 @@ export function EntryEditor({ entry, groupUuid, onClose }: Props) {
                         />
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setCustomField(i, { protected: !cf.protected })}
-                      aria-label={cf.protected ? "Unprotect field" : "Protect field"}
-                      title={cf.protected ? "Protected (masked)" : "Plain text"}
-                      className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg border transition-colors ${
-                        cf.protected
-                          ? "border-accent-mint/50 text-accent-mint"
-                          : "border-border-sage text-text-muted hover:text-text-secondary"
-                      }`}
-                    >
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
-                        <rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" strokeWidth="1.8" />
-                        <path
-                          d="M8 11V8a4 4 0 0 1 8 0v3"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeCustomField(i)}
-                      aria-label="Remove field"
-                      className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border-sage text-text-muted transition-colors hover:border-status-error/50 hover:text-status-error"
-                    >
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
-                        <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                      </svg>
-                    </button>
                   </div>
                 ))}
               </div>
